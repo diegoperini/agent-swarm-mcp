@@ -1,0 +1,15 @@
+# Site block for a Caddy you already run (SWARM_CADDY_NETWORK in config.env).
+# Replace swarm.example.com with your SWARM_PUBLIC_HOST, add this to that
+# Caddy's config, and reload it. Caddy must be on the network named in
+# SWARM_CADDY_NETWORK. Drop the tls block if port 80 is open and you prefer
+# the HTTP-01 challenge.
+swarm.example.com {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+	reverse_proxy http://agent-swarm:8780 {
+		flush_interval -1
+	}
+}

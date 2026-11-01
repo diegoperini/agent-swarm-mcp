@@ -1,0 +1,18 @@
+# Caddy config for the bundled Caddy (docker-compose.bundled-caddy.yml).
+# SWARM_PUBLIC_HOST comes from config.env. Only port 443 is used: the
+# certificate comes from Let's Encrypt over 443 (TLS-ALPN-01) and there is no
+# HTTP-to-HTTPS redirect on port 80.
+{
+	auto_https disable_redirects
+}
+
+{$SWARM_PUBLIC_HOST} {
+	tls {
+		issuer acme {
+			disable_http_challenge
+		}
+	}
+	reverse_proxy swarm:8780 {
+		flush_interval -1
+	}
+}

@@ -1,0 +1,8 @@
+# Scripts and container files run on Linux: keep LF even on Windows checkouts.
+*.sh           text eol=lf
+Dockerfile     text eol=lf
+*.yml          text eol=lf
+caddy/*        text eol=lf
+config.env.example text eol=lf
+# Windows launchers need CRLF.
+*.bat          text eol=crlf

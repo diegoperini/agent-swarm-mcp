@@ -1,0 +1,10 @@
+# Added by run.sh when SWARM_CADDY_NETWORK is set: the swarm joins the Docker
+# network of a Caddy you already run on 443, which reaches it as
+# http://agent-swarm:8780 (see caddy/site.caddy.example).
+services:
+  swarm:
+    networks: [default, caddy]
+networks:
+  caddy:
+    external: true
+    name: ${SWARM_CADDY_NETWORK:-caddy_net}

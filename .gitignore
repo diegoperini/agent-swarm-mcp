@@ -1,0 +1,8 @@
+.env
+config.env
+state/
+context/*
+!context/.keep
+*.tmp
+*.lock
+test/

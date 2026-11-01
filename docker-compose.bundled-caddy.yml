@@ -1,0 +1,20 @@
+# Added by run.sh when SWARM_CADDY_NETWORK is empty: a Caddy of its own owns
+# port 443, gets the Let's Encrypt certificate for SWARM_PUBLIC_HOST over 443
+# (TLS-ALPN-01, so port 80 can stay closed) and proxies to the swarm.
+services:
+  caddy:
+    image: caddy:2.10
+    container_name: agent-swarm-caddy
+    restart: unless-stopped
+    depends_on: [swarm]
+    ports:
+      - "443:443"
+    environment:
+      SWARM_PUBLIC_HOST: ${SWARM_PUBLIC_HOST:-}
+    volumes:
+      - ./caddy:/etc/caddy:ro
+      - caddy_data:/data
+      - caddy_config:/config
+volumes:
+  caddy_data:
+  caddy_config:

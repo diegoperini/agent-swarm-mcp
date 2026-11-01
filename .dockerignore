@@ -1,0 +1,10 @@
+# Only the server files go into the image; secrets and data never do.
+.git
+.env
+config.env
+state
+test
+caddy
+*.tmp
+*.lock
+docs

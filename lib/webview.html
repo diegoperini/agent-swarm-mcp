@@ -1,0 +1,987 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>agent-swarm</title>
+<style>
+  :root {
+    --bg: #f6f5f2; --panel: #ffffff; --text: #1f1e1c; --muted: #75726b; --line: #e3e0d9;
+    --soft: #ece9e2; --accent: #c2603a; --accent-text: #ffffff; --code-bg: #f1efea;
+    --ok: #2f8a4c; --warn: #b7791f; --bad: #b8402a; --err-bg: #fbe9e6; --err-text: #9c2f1c; --sel: #f3e3da;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1b1a18; --panel: #242320; --text: #ece9e3; --muted: #9d998f; --line: #36342f;
+      --soft: #302e2a; --accent: #e07a52; --accent-text: #1b1a18; --code-bg: #1f1e1b;
+      --ok: #5cc27d; --warn: #e0b04a; --bad: #e8735a; --err-bg: #3a221c; --err-text: #f2a593; --sel: #3a2c24;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 14px/1.5 "Segoe UI", system-ui, -apple-system, sans-serif; }
+  body { display: flex; flex-direction: column; height: 100vh; height: 100dvh; overflow: hidden; }
+  button, select, input, textarea { font: inherit; color: inherit; }
+  button { cursor: pointer; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 5px 12px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  input, select, textarea { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  textarea:focus, input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  pre { margin: 6px 0 0; padding: 8px 10px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.45 ui-monospace, Consolas, monospace; max-height: 520px; overflow-y: auto; }
+  .muted { color: var(--muted); }
+  .small { font-size: 12px; }
+
+  header { flex: none; display: flex; align-items: center; gap: 10px; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 15px; margin: 0 6px 0 0; white-space: nowrap; }
+  .inst { display: flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); cursor: pointer; font-size: 12px; white-space: nowrap; }
+  .inst.sel { border-color: var(--accent); background: var(--sel); }
+  .inst b { font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; display: inline-block; }
+  .dot.ok { background: var(--ok); } .dot.bad { background: var(--bad); } .dot.busy { background: var(--warn); }
+  .tabs { display: flex; gap: 4px; margin-left: auto; }
+  .tab { border: 0; background: transparent; padding: 5px 10px; border-radius: 8px; color: var(--muted); }
+  .tab.sel { background: var(--soft); color: var(--text); font-weight: 600; }
+  .whoami { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+  .whoami select { height: 28px; padding: 0 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font-size: 12px; max-width: 180px; }
+  .namelist { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; max-height: 40vh; overflow: auto; }
+  .namelist .nm { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 8px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .namelist .nm span { flex: 1; }
+
+  #main { flex: 1 1 auto; min-height: 0; display: flex; }
+  aside { width: 300px; flex: none; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  .side-head { padding: 10px 12px; display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--line); }
+  .side-head .grow { flex: 1; font-weight: 600; }
+  #list { overflow-y: auto; flex: 1; }
+  .item { padding: 9px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .item:hover { background: var(--soft); }
+  .item.sel { background: var(--sel); }
+  .item .nm { font-weight: 600; font-family: ui-monospace, Consolas, monospace; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .sub { font-size: 12px; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill { font-size: 11px; padding: 0 7px; border-radius: 999px; background: var(--soft); white-space: nowrap; }
+  .pill.working { background: var(--warn); color: #1b1a18; }
+  .pill.awaiting_confirmation { background: var(--accent); color: var(--accent-text); }
+  .pill.error { background: var(--bad); color: #fff; }
+  .pill.nonstop { background: transparent; border: 1px solid var(--accent); color: var(--accent); }
+  .pill.paused { background: var(--soft); color: var(--muted); }
+
+  section#pane { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; position: relative; }
+  .conv-head { flex: none; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel); display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+  .conv-head .title { font-weight: 600; font-size: 15px; }
+  .conv-head .actions { margin-left: auto; display: flex; gap: 6px; }
+  .meter { width: 120px; height: 6px; border-radius: 3px; background: var(--soft); overflow: hidden; display: inline-block; vertical-align: middle; }
+  .meter > div { height: 100%; background: var(--ok); }
+  .meter.warn > div { background: var(--warn); } .meter.bad > div { background: var(--bad); }
+  #scroller { flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+  #events { max-width: 920px; margin: 0 auto; padding: 14px 16px; }
+  .ev { margin: 0 0 12px; }
+  .bubble { white-space: pre-wrap; overflow-wrap: anywhere; padding: 9px 12px; border-radius: 10px; border: 1px solid var(--line); }
+  .ev.user .bubble { background: var(--soft); border-color: transparent; margin-left: 56px; }
+  .ev.assistant .bubble { background: var(--panel); margin-right: 56px; }
+  .ev .who { font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+  .ev.user .who { text-align: right; }
+  .ev.notice, .ev.usage, .ev.archived { text-align: center; font-size: 12px; color: var(--muted); }
+  .ev.notice.warn { color: var(--warn); }
+  .ev.error .bubble { background: var(--err-bg); color: var(--err-text); border-color: transparent; }
+  details.tool, details.think, details.box { border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; margin-right: 56px; background: var(--panel); }
+  details.tool > summary, details.think > summary, details.box > summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+  details.tool > summary b { color: var(--text); font-family: ui-monospace, Consolas, monospace; font-weight: 600; }
+  details.tool.err > summary b { color: var(--bad); }
+  .label { margin-top: 6px; font-size: 11px; color: var(--muted); }
+  .empty { color: var(--muted); text-align: center; padding: 60px 16px; }
+
+  .composer { flex: none; border-top: 1px solid var(--line); background: var(--panel); }
+  .composer form { max-width: 920px; margin: 0 auto; padding: 10px 16px 4px; display: flex; gap: 8px; }
+  .composer textarea { flex: 1; height: 64px; resize: none; }
+  .typing { display: flex; align-items: center; gap: 10px; max-width: 920px; margin: -8px auto 0; padding: 0 16px 16px; color: var(--muted); font-size: 12px; }
+  .typing .dots { display: inline-flex; gap: 4px; padding: 9px 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+  .typing .dots i { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); opacity: .35; animation: swarm-dot 1.2s infinite ease-in-out; }
+  .typing .dots i:nth-child(2) { animation-delay: .15s; } .typing .dots i:nth-child(3) { animation-delay: .3s; }
+  .typing.slow .dots i { animation-duration: 2.4s; background: var(--muted); }
+  @keyframes swarm-dot { 0%, 80%, 100% { opacity: .25; transform: translateY(0); } 40% { opacity: 1; transform: translateY(-3px); } }
+  .pill.working::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin-right: 5px; vertical-align: 1px; animation: swarm-pulse 1.2s infinite ease-in-out; }
+  @keyframes swarm-pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) { .typing .dots i, .pill.working::before { animation: none; opacity: .8; } }
+  .composer .chips { max-width: 920px; margin: 0 auto; padding: 8px 16px 0; display: flex; gap: 6px; flex-wrap: wrap; }
+  .composer .chips:empty { display: none; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); font-size: 12px; max-width: 320px; }
+  .chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .chip button { border: 0; background: transparent; padding: 0 6px; color: var(--muted); font-size: 14px; line-height: 1; }
+  #pane.dropping::after { content: 'Drop files to attach them to your next message'; position: absolute; inset: 8px; border: 2px dashed var(--accent); border-radius: 12px; background: color-mix(in srgb, var(--bg) 85%, transparent); display: flex; align-items: center; justify-content: center; font-weight: 600; color: var(--accent); pointer-events: none; z-index: 5; }
+  .filecard { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 10px 12px; margin-right: 15%; }
+  .filecard .row { display: flex; align-items: center; gap: 10px; padding: 3px 0; }
+  .filecard .row .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .filetable { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .filetable td { padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  .filetable td.name { font-family: ui-monospace, Consolas, monospace; word-break: break-all; }
+  .filetable td.size, .filetable td.when { color: var(--muted); white-space: nowrap; }
+  .filetable td.acts { white-space: nowrap; text-align: right; }
+  .composer .hint { max-width: 920px; margin: 0 auto; padding: 0 16px 8px; font-size: 11px; color: var(--muted); }
+
+  .page { flex: 1; overflow-y: auto; padding: 16px; }
+  .page .inner { max-width: 960px; margin: 0 auto; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; font-size: 13px; }
+  th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--bg); }
+  tr.click { cursor: pointer; } tr.click:hover td { background: var(--soft); }
+  code, .mono { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+
+  .logs { font: 12px/18px ui-monospace, Consolas, monospace; }
+  .logline { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); }
+  .logline.warn { color: var(--warn); } .logline.error { color: var(--bad); }
+
+  dialog { border: 1px solid var(--line); border-radius: 12px; background: var(--panel); color: var(--text); padding: 18px 20px; width: min(560px, 94vw); }
+  dialog::backdrop { background: rgba(0,0,0,.35); }
+  dialog h2 { margin: 0 0 10px; font-size: 16px; }
+  dialog.wide { width: min(1080px, 96vw); max-height: 94vh; }
+  .dlg-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 24px; }
+  .dlg-col { display: flex; flex-direction: column; }
+  .dlg-col .grow { flex: 1; } .dlg-col .grow textarea { flex: 1; min-height: 110px; resize: vertical; }
+  @media (max-width: 800px) { .dlg-grid { grid-template-columns: minmax(0, 1fr); } }
+  .field { margin: 10px 0; display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; font-weight: 600; }
+  .field .note { font-size: 11px; color: var(--muted); }
+  .row { display: flex; gap: 12px; align-items: flex-end; } .row > .field { flex: 1; min-width: 0; }
+  dialog select, dialog input:not([type=checkbox]) { height: 36px; width: 100%; }
+  dialog select { padding: 0 8px; }
+  .unit { display: flex; align-items: center; gap: 10px; } .unit input { width: 96px !important; flex: none; } .unit span { font-size: 12px; color: var(--muted); }
+  label.check { display: flex; gap: 8px; align-items: center; font-weight: 600; font-size: 13px; cursor: pointer; } label.check input { width: 16px; height: 16px; margin: 0; }
+  .dlg-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  .formerr { color: var(--bad); font-size: 13px; min-height: 18px; }
+  .remoteform { max-width: 560px; } .remoteform input { width: 100%; height: 36px; }
+  .prefix { display: flex; align-items: center; } .prefix span { padding: 6px 8px; background: var(--soft); border: 1px solid var(--line); border-right: 0; border-radius: 8px 0 0 8px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; }
+  .prefix input { border-radius: 0 8px 8px 0; flex: 1; font-family: ui-monospace, Consolas, monospace; }
+
+  footer { flex: none; display: flex; gap: 8px; align-items: center; padding: 3px 14px; border-top: 1px solid var(--line); background: var(--code-bg); font-size: 12px; color: var(--muted); }
+  footer #lastlog { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-family: ui-monospace, Consolas, monospace; }
+  @media (max-width: 760px) {
+    aside { width: 200px; }
+    .ev.user .bubble { margin-left: 16px; } .ev.assistant .bubble, details.tool, details.think, details.box { margin-right: 0; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>agent-swarm</h1>
+  <div id="instances" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+  <nav class="tabs">
+    <button class="tab sel" data-tab="convs">Conversations</button>
+    <button class="tab" data-tab="archive">Archive</button>
+    <button class="tab" data-tab="mcp">MCP servers</button>
+    <button class="tab" data-tab="remote" id="remotetab">Remote</button>
+    <button class="tab" data-tab="log">Log</button>
+    <a id="logout" href="/logout" class="tab" style="display:none;text-decoration:none">Sign out</a>
+  </nav>
+  <label class="whoami" title="The name your messages are signed with (cosmetic: every human has the same say)">You are <select id="whoami"></select></label>
+</header>
+
+<div id="main">
+  <aside id="side">
+    <div class="side-head"><span class="grow" id="side-title">Conversations</span><button class="primary" id="newbtn">New</button></div>
+    <div id="list"></div>
+  </aside>
+  <section id="pane">
+    <div class="empty" id="noconv">Select a conversation, or start a new one.</div>
+  </section>
+</div>
+
+<footer><span class="dot" id="dot"></span><span id="status">connecting</span><span id="lastlog"></span></footer>
+
+<dialog id="newdlg" class="wide">
+  <form id="newform" method="dialog">
+    <h2>New conversation on <span id="new-inst"></span></h2>
+    <div class="dlg-grid">
+      <div>
+        <div class="field"><label for="f-name">Name (mandatory, unique)</label>
+          <div class="prefix"><span id="f-prefix">local.</span><input id="f-name" required pattern="[a-z0-9][a-z0-9_\-]{0,39}" placeholder="e.g. level-planner" autocomplete="off" spellcheck="false"></div>
+          <span class="note">Lowercase letters, digits, "-" or "_". The instance prefix keeps names unique across local and remote.</span></div>
+        <div class="row">
+          <div class="field"><label for="f-model">Model</label><select id="f-model"><option value="opus">opus</option><option value="sonnet">sonnet</option><option value="haiku">haiku</option></select></div>
+          <div class="field" id="f-effort-field"><label for="f-effort">Effort</label><select id="f-effort">
+            <option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select></div>
+        </div>
+        <div class="field" id="f-effort-notefield"><span class="note" id="f-effort-note"></span></div>
+        <div class="field" id="f-budget-field"><label for="f-budget">Tool budget</label>
+          <div class="unit"><input id="f-budget" type="number" min="0" max="10000"><span id="f-budget-note"></span></div></div>
+        <div class="field"><label class="check"><input type="checkbox" id="f-nonstop"> Non-stop mode</label>
+          <span class="note">For agents that never stop working, like one that plays a game forever. The agent works continuously and never pauses to ask for permission, so it has no tool budget, and it runs at the default effort. It compacts itself at <span id="f-nonstop-at">800k</span> tokens of context. You can still message it; messages reach it between its steps. It keeps running, and using tokens, until you pause or archive it.</span></div>
+      </div>
+      <div class="dlg-col">
+        <div class="field"><label for="f-title">Title</label><input id="f-title" placeholder="Optional short description"></div>
+        <div class="field grow"><label for="f-instr">Standing instructions</label><textarea id="f-instr" placeholder="Optional: role, rules, output format. Kept word for word, even through compaction."></textarea></div>
+        <div class="field grow"><label for="f-msg">First message</label><textarea id="f-msg" placeholder="Optional. Without standing instructions, it is the brief, kept word for word through compaction."></textarea></div>
+      </div>
+    </div>
+    <div class="formerr" id="f-err"></div>
+    <div class="dlg-actions"><button type="button" id="f-cancel">Cancel</button><button class="primary" type="submit">Start</button></div>
+  </form>
+</dialog>
+
+<dialog id="filedlg" style="width:min(900px,96vw)">
+  <h2>Scratch files of <span id="file-conv" class="mono"></span></h2>
+  <div class="small muted" id="file-path"></div>
+  <div id="file-list" style="max-height:60vh;overflow:auto"></div>
+  <pre id="file-body" style="max-height:60vh;display:none"></pre>
+  <div class="dlg-actions"><button type="button" id="file-zip">Download all (.zip)</button><span style="flex:1"></span><button type="button" id="file-up">Back to the list</button><button type="button" id="file-close">Close</button></div>
+</dialog>
+
+<dialog id="namesdlg" style="width:min(460px,96vw)">
+  <h2>Your names</h2>
+  <p class="small muted">Names sign your messages, so agents and their owners see which person wrote them. They are cosmetic: every human using this web view has the same say. Each one is shown as <code>human-&lt;name&gt;</code>.</p>
+  <div class="namelist" id="names-list"></div>
+  <div class="prefix"><span>human-</span><input id="names-new" placeholder="name" spellcheck="false" maxlength="32"></div>
+  <div class="formerr" id="names-err"></div>
+  <div class="dlg-actions"><button type="button" id="names-close">Close</button><button class="primary" type="button" id="names-add">Add</button></div>
+</dialog>
+
+<dialog id="importdlg">
+  <h2>Import MCP servers from Claude Desktop</h2>
+  <div class="field"><label for="imp-pick">Claude Desktop config file</label>
+    <select id="imp-pick"></select>
+    <div class="unit" style="margin-top:6px"><input id="imp-path" placeholder="...or paste the path of claude_desktop_config.json (or its folder)" spellcheck="false" style="width:100% !important;flex:1"><button type="button" id="imp-load">Load</button></div>
+    <span class="note" id="imp-where"></span></div>
+  <div id="imp-list" style="margin-top:6px"></div>
+  <p class="small muted">Tick the servers your local agents may use, then import. Ticked servers go into this swarm's allow list (<code>mcp-servers.json</code> in its state folder), including their env values.</p>
+  <div class="formerr" id="imp-err"></div>
+  <div class="dlg-actions"><button type="button" id="imp-cancel">Cancel</button><button class="primary" type="button" id="imp-ok" disabled>Import ticked</button></div>
+</dialog>
+
+<script>
+const TOKEN = "__TOKEN__";
+const MODE = "__MODE__";            // local | remote (the page's own server)
+let HOME = null;                   // this server's instance name
+let inst = null;                   // selected instance
+let tab = 'convs';
+let st = {};                       // last state per instance
+let convSel = null, convArchived = false, lastSeq = 0, convMeta = null;
+let lastLogId = 0, logs = [];
+let filesPath = '';
+const $ = (id) => document.getElementById(id);
+
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function fmtTime(t) { const d = new Date(t); return isNaN(d) ? '' : d.toLocaleString(); }
+function fmtK(n) { n = n || 0; return n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k' : String(n); }
+function pretty(s) { try { return JSON.stringify(JSON.parse(s), null, 2); } catch { return s || ''; } }
+
+function apiPath(path, instance) {
+  const i = instance || inst;
+  if (!i || i === HOME) return path;
+  return '/api/gw/' + encodeURIComponent(i) + '/' + path.substring(5);
+}
+async function api(path, opts = {}, instance) {
+  opts.headers = Object.assign({ 'X-Debug-Token': TOKEN }, opts.headers || {});
+  if (opts.body && typeof opts.body !== 'string') { opts.body = JSON.stringify(opts.body); opts.headers['Content-Type'] = 'application/json'; }
+  if (opts.method === 'POST') opts.cache = 'no-store';
+  const r = await fetch(apiPath(path, instance), opts);
+  let data = null; try { data = await r.json(); } catch {}
+  if (!r.ok) { const e = new Error((data && (data.error || data.error_description)) || ('HTTP ' + r.status)); e.status = r.status; throw e; }
+  return data;
+}
+
+// ---------- header: instances with counts ----------
+function countText(c) {
+  if (!c) return '';
+  let t = c.active + ' active';
+  if (c.working) t += ' · ' + c.working + ' working';
+  if (c.awaiting_confirmation) t += ' · ' + c.awaiting_confirmation + ' waiting';
+  return t;
+}
+function renderInstances() {
+  const box = $('instances'); box.textContent = '';
+  const home = st[HOME];
+  if (!home) return;
+  const items = [{ name: HOME, counts: home.counts, error: null }];
+  for (const r of home.remotes || []) {
+    // The selected remote's own state is fetched every refresh: fresher than the server's periodic check.
+    const s2 = st[r.name];
+    const live = (s2 && s2.counts && !s2.error && Date.now() - (s2.at || 0) < 6000) ? s2.counts : null;
+    items.push({ name: r.name, counts: live || r.counts, error: live ? null : r.error });
+  }
+  for (const it of items) {
+    const b = el('span', 'inst' + (it.name === inst ? ' sel' : ''));
+    const d = el('span', 'dot ' + (it.error ? 'bad' : (it.counts && it.counts.working ? 'busy' : 'ok')));
+    b.append(d, el('b', null, it.name), el('span', 'muted', it.error ? it.error : countText(it.counts)));
+    b.title = it.error ? it.name + ': ' + it.error : it.name + (it.name === HOME ? ' (this computer)' : ' (remote, managed through this web view)');
+    b.onclick = () => switchInstance(it.name);
+    box.append(b);
+  }
+}
+
+// ---------- sidebar ----------
+function renderList() {
+  const list = $('list'); list.textContent = '';
+  const s = st[inst];
+  $('side-title').textContent = tab === 'archive' ? 'Archive' : 'Conversations';
+  $('newbtn').style.display = tab === 'convs' ? '' : 'none';
+  if (!s) { list.append(el('div', 'empty', inst === HOME ? 'Loading...' : 'Loading ' + inst + '...')); return; }
+  const rows = tab === 'archive' ? (s.archive || []) : (s.convs || []);
+  if (!rows.length) { list.append(el('div', 'empty', tab === 'archive' ? 'Nothing archived yet.' : 'No conversations. Start one with New.')); return; }
+  for (const c of rows) {
+    const it = el('div', 'item' + (c.id === convSel ? ' sel' : ''));
+    it.append(el('div', 'nm', c.id));
+    const sub = el('div', 'sub');
+    if (tab === 'archive') {
+      sub.append(el('span', null, c.model), el('span', null, 'by ' + c.owner), el('span', null, 'archived ' + fmtTime(c.archived_at)));
+    } else {
+      sub.append(el('span', 'pill ' + c.status, c.status === 'awaiting_confirmation' ? 'waiting for go-ahead' : c.status));
+      if (c.nonstop) sub.append(el('span', 'pill nonstop', c.paused ? 'non-stop · paused' : 'non-stop'));
+      sub.append(el('span', null, c.model), el('span', null, c.owner === 'human' ? 'yours' : 'by ' + c.owner), el('span', null, c.context_percent + '% ctx'));
+      if (c.phase) sub.append(el('span', null, c.phase));
+    }
+    it.append(sub);
+    if (c.title && c.title !== c.id) it.title = c.title;
+    it.onclick = () => openConv(c.id, tab === 'archive');
+    list.append(it);
+  }
+}
+
+// ---------- conversation pane ----------
+function openConv(id, archived) {
+  goneToArchive = null;
+  convSel = id; convArchived = archived; lastSeq = 0; convMeta = null; headKey = ''; compacting = null;
+  rememberUi();
+  renderPane(); renderList(); pollConv();
+}
+
+function renderPane() {
+  const pane = $('pane'); pane.textContent = '';
+  if (tab === 'mcp') { pane.append(mcpPage()); return; }
+  if (tab === 'remote') { pane.append(remotePage()); return; }
+  if (tab === 'log') { pane.append(logPage()); return; }
+  if (!convSel) {
+    const box = el('div', 'empty', tab === 'archive' ? 'Select an archived conversation to read it.' : 'Select a conversation, or start a new one.');
+    if (tab === 'convs' && goneToArchive && goneToArchive.inst === inst) {
+      const g = goneToArchive;
+      box.textContent = g.id + ' was archived. Its full history is in the Archive.';
+      const b = el('button', null, 'Open it in the Archive'); b.style.marginLeft = '10px';
+      b.onclick = () => { goneToArchive = null; rememberUi(); memo.sel[inst + '|archive'] = g.id; setTab('archive'); };
+      box.append(b);
+    }
+    pane.append(box); return;
+  }
+  const head = el('div', 'conv-head'); head.id = 'convhead';
+  const sc = el('div', null); sc.id = 'scroller';
+  const evs = el('div', null); evs.id = 'events';
+  const typing = el('div', 'typing'); typing.id = 'typing'; typing.style.display = 'none';
+  const dots = el('span', 'dots'); dots.append(el('i'), el('i'), el('i'));
+  typing.append(dots, el('span', null, ''));
+  sc.append(evs, typing);
+  pane.append(head, sc);
+  if (!convArchived) {
+    const comp = el('div', 'composer'); comp.id = 'composer';
+    const f = el('form'); const ta = el('textarea'); ta.id = 'msg'; ta.placeholder = 'Message'; const b = el('button', 'primary', 'Send'); b.type = 'submit'; b.id = 'sendbtn';
+    const pick = el('input'); pick.type = 'file'; pick.multiple = true; pick.style.display = 'none';
+    const attach = el('button', null, 'Attach'); attach.type = 'button'; attach.title = 'Attach files (or drop them here), up to 200 MB per message. They are saved in the agent\'s uploads/ folder when you send.';
+    attach.onclick = () => pick.click();
+    pick.onchange = () => { addAttachments(pick.files); pick.value = ''; };
+    const btns = el('div'); btns.style.cssText = 'display:flex;flex-direction:column;gap:6px'; btns.append(b, attach);
+    f.append(ta, btns);
+    const chips = el('div', 'chips'); chips.id = 'chips';
+    const hint = el('div', 'hint', 'Enter sends, Shift+Enter adds a line.'); hint.id = 'comphint';
+    comp.append(chips, f, hint); pane.append(comp);
+    attachments = []; renderChips();
+    f.onsubmit = async (ev) => {
+      ev.preventDefault();
+      const text = ta.value; if (!text.trim() && !attachments.length) return;
+      b.disabled = true; attach.disabled = true;
+      const target = convSel;
+      try {
+        let paths = [];
+        if (attachments.length) {
+          const total = attachments.reduce((a, x) => a + x.size, 0); let done = 0;
+          for (let i = 0; i < attachments.length; i++) {
+            const file = attachments[i];
+            const up = await uploadFile(target, file, (sent) => {
+              b.textContent = 'Uploading ' + Math.floor(100 * (done + sent) / Math.max(1, total)) + '%';
+            });
+            done += file.size; paths.push(up.path);
+          }
+        }
+        await api('/api/send', { method: 'POST', body: { id: target, text, attachments: paths, as: currentHuman() } });
+        ta.value = ''; attachments = []; renderChips(); pollConv();
+      }
+      catch (e) { alert(e.message); }
+      finally { b.disabled = false; attach.disabled = false; b.textContent = 'Send'; headKey = ''; if (convMeta) renderHead(convMeta); ta.focus(); }
+    };
+    ta.addEventListener('keydown', (ev) => { if (ev.key === 'Enter' && !ev.shiftKey && !ev.isComposing) { ev.preventDefault(); if (!b.disabled) f.requestSubmit(); } });
+  }
+}
+
+// ---------- attachments ----------
+let attachments = [];
+const MAX_TOTAL = 200 * 1024 * 1024;   // per message (and so per file)
+function addAttachments(list) {
+  for (const f of list) {
+    if (attachments.reduce((a, x) => a + x.size, 0) + f.size > MAX_TOTAL) { alert('Attachments are limited to 200 MB per message; ' + f.name + ' does not fit.'); continue; }
+    attachments.push(f);
+  }
+  renderChips();
+}
+function renderChips() {
+  const box = $('chips'); if (!box) return;
+  box.textContent = '';
+  attachments.forEach((f, i) => {
+    const c = el('span', 'chip'); c.title = f.name + ' (' + fmtBytes(f.size) + ')';
+    const x = el('button', null, '\u00d7'); x.type = 'button'; x.title = 'Remove'; x.onclick = () => { attachments.splice(i, 1); renderChips(); };
+    c.append(el('span', null, f.name + ' \u00b7 ' + fmtBytes(f.size)), x); box.append(c);
+  });
+}
+function fmtBytes(n) { return n >= 1048576 ? (n / 1048576).toFixed(1) + ' MB' : n >= 1024 ? (n / 1024).toFixed(1) + ' KB' : n + ' B'; }
+// One raw upload per file, with progress (streamed to disk on the server).
+function uploadFile(id, file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const x = new XMLHttpRequest();
+    x.open('POST', apiPath('/api/upload-file?id=' + encodeURIComponent(id) + '&name=' + encodeURIComponent(file.name)));
+    x.setRequestHeader('X-Debug-Token', TOKEN);
+    x.setRequestHeader('Content-Type', 'application/octet-stream');
+    x.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded); };
+    x.onload = () => {
+      let j = null; try { j = JSON.parse(x.responseText); } catch {}
+      if (x.status >= 200 && x.status < 300 && j) resolve(j); else reject(new Error((j && j.error) || ('Upload of ' + file.name + ' failed (HTTP ' + x.status + ')')));
+    };
+    x.onerror = () => reject(new Error('Upload of ' + file.name + ' failed: connection lost'));
+    x.send(file);
+  });
+}
+let dragDepth = 0;
+function canDrop() { return convSel && !convArchived && $('composer') && (tab === 'convs'); }
+$('pane').addEventListener('dragenter', (e) => { if (!canDrop() || !e.dataTransfer.types.includes('Files')) return; e.preventDefault(); dragDepth++; $('pane').classList.add('dropping'); });
+$('pane').addEventListener('dragover', (e) => { if (canDrop() && e.dataTransfer.types.includes('Files')) e.preventDefault(); });
+$('pane').addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) $('pane').classList.remove('dropping'); });
+$('pane').addEventListener('drop', (e) => { dragDepth = 0; $('pane').classList.remove('dropping'); if (!canDrop()) return; e.preventDefault(); addAttachments(e.dataTransfer.files); $('msg') && $('msg').focus(); });
+
+// ---------- downloads ----------
+async function downloadFrom(path, fallbackName) {
+  const r = await fetch(apiPath(path), { headers: { 'X-Debug-Token': TOKEN }, cache: 'no-store' });
+  if (!r.ok) { let m = 'HTTP ' + r.status; try { const j = await r.json(); m = j.error || m; } catch {} throw new Error(m); }
+  const blob = await r.blob();
+  let name = fallbackName;
+  const cd = r.headers.get('Content-Disposition') || '';
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(cd); const plain = /filename="([^"]+)"/i.exec(cd);
+  if (star) { try { name = decodeURIComponent(star[1]); } catch {} } else if (plain) name = plain[1];
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a'); a.href = url; a.download = name || 'download'; document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30000);
+}
+function downloadFile(id, path) { return downloadFrom('/api/download?id=' + encodeURIComponent(id) + '&path=' + encodeURIComponent(path), path.split('/').pop()).catch(e => alert(e.message)); }
+function downloadZip(id) { return downloadFrom('/api/download-zip?id=' + encodeURIComponent(id), id + '-files.zip').catch(e => alert(e.message)); }
+
+// "Please wait" while the agent thinks, uses a tool or writes its reply.
+function renderTyping(c) {
+  const t = $('typing'); if (!t) return;
+  const busy = !c.archived && c.status === 'working' && !(c.phase && /^idle/.test(c.phase));
+  t.style.display = busy ? '' : 'none';
+  if (!busy) return;
+  const p = c.phase || 'thinking';
+  let label = convSel + ' is working';
+  if (p === 'thinking') label = convSel + ' is thinking or writing its reply';
+  else if (p.startsWith('tool: ')) label = convSel + ' is using ' + p.substring(6);
+  else if (p.startsWith('sleeping')) label = convSel + ' is ' + p;
+  else if (p === 'compacting') label = convSel + ' is compacting its context';
+  t.classList.toggle('slow', p.startsWith('sleeping'));
+  t.lastChild.textContent = label + '...';
+}
+
+let goneToArchive = null;   // the conversation that was open on the Conversations tab when it got archived
+
+let headKey = '', compacting = null;
+function renderHead(c) {
+  const h = $('convhead'); if (!h) return;
+  // Rebuild only when something shown changed: rebuilding every poll swallowed clicks.
+  if (compacting && (c.compactions > compacting.from || (c.status !== 'working' && Date.now() - compacting.at > 120000))) compacting = null;
+  const key = JSON.stringify([c.tool_budget, c.id, c.title, c.status, c.archived, c.nonstop, c.paused, c.model, c.effort, c.owner, c.tool_calls, c.tokens_in, c.tokens_out, c.compactions, c.context_tokens, c.context_window, (c.children || []).length, !!compacting]);
+  if (key === headKey) return;
+  headKey = key;
+  h.textContent = '';
+  const t = el('span', 'title mono', c.id);
+  h.append(t);
+  if (c.title && c.title !== c.id) h.append(el('span', 'muted', c.title));
+  h.append(el('span', 'pill ' + (c.archived ? '' : c.status), c.archived ? 'archived' : (c.status === 'awaiting_confirmation' ? 'waiting for go-ahead' : c.status)));
+  if (c.nonstop) h.append(el('span', 'pill nonstop', c.paused ? 'non-stop · paused' : 'non-stop'));
+  const budgetTxt = c.nonstop ? 'no tool budget' : (c.tool_budget === 0 ? 'unlimited tool budget' : 'budget ' + c.tool_budget + ' tool calls/message');
+  h.append(el('span', 'small muted', c.model + ' · ' + (c.effort || 'medium') + ' effort · ' + budgetTxt + ' · owner: ' + (c.owner === 'human' ? 'you' : c.owner) + ' · ' + c.tool_calls + ' tool calls · ' + fmtK(c.tokens_in) + ' tokens in / ' + fmtK(c.tokens_out) + ' out' + (c.compactions ? ' · compacted ' + c.compactions + '×' : '')));
+  const m = el('span', 'meter' + (c.context_percent >= 90 ? ' bad' : c.context_percent >= (st[inst] ? st[inst].context_warn_percent : 70) ? ' warn' : ''));
+  const bar = el('div'); bar.style.width = Math.min(100, c.context_percent) + '%'; m.append(bar);
+  const mw = el('span', 'small muted'); mw.append(m, document.createTextNode(' ' + fmtK(c.context_tokens) + ' / ' + fmtK(c.context_window) + ' tokens of context'));
+  h.append(mw);
+  const a = el('span', 'actions');
+  const files = el('button', null, 'Files'); files.onclick = () => openFiles('');
+  a.append(files);
+  if (!c.archived) {
+    if (c.status === 'working') { const s = el('button', null, c.nonstop ? 'Pause' : 'Stop'); s.title = c.nonstop ? 'Pause non-stop work; any message resumes it' : 'Stop the running turn'; s.onclick = () => act('/api/stop'); a.append(s); }
+    { const k = el('button', null, compacting ? 'Compacting...' : 'Compact');
+      k.disabled = !!compacting || (c.status === 'working' && !c.nonstop);
+      k.title = c.status === 'working' && !c.nonstop ? 'Available when the current turn ends' : (c.nonstop ? 'Compact before the agent\'s next step' : '');
+      k.onclick = async () => {
+        if (!confirm('Compact ' + c.id + '?\n\nThe agent replaces the earlier conversation with a summary it writes. Its brief (standing instructions, or the first message) and every message you injected are kept word for word. The full history stays visible here.')) return;
+        compacting = { from: c.compactions || 0, at: Date.now() }; headKey = ''; renderHead(c);
+        try { await api('/api/compact', { method: 'POST', body: { id: convSel } }); } catch (e) { compacting = null; headKey = ''; renderHead(c); alert(e.message); }
+        pollConv();
+      };
+      a.append(k); }
+    const x = el('button', 'danger', 'Archive'); x.onclick = () => {
+      const who = c.owner === 'human' ? '' : '\n\nThis conversation belongs to ' + c.owner + '; archiving it ends that agent\'s work.';
+      if (confirm('Archive ' + c.id + '? It stops, keeps its full history, and moves to the Archive.' + (c.children && c.children.length ? '\nIts remote agents are killed too.' : '') + who)) act('/api/kill');
+    };
+    a.append(x);
+  }
+  h.append(a);
+  const ta = $('msg'), sb = $('sendbtn'), hint = $('comphint');
+  if (ta) {
+    const mine = c.owner === 'human';
+    sb.textContent = mine ? 'Send' : 'Inject';
+    let h = 'Enter sends, Shift+Enter adds a line.';
+    if (!mine) h = c.owner + ' owns this conversation. Your message is injected as the developer\'s and overrides ' + c.owner + '\'s instructions; the agent tells ' + c.owner + ' what changed.';
+    if (c.nonstop) h += c.paused ? ' Non-stop work is paused: any message resumes it.' : ' Non-stop: messages reach the agent between its steps, without stopping its work.';
+    else if (c.status === 'awaiting_confirmation') h += ' The agent used its tool budget and is waiting: any message continues it with a fresh budget.';
+    else if (c.status === 'working') h += ' Messages sent now are queued for the next turn.';
+    hint.textContent = h;
+    ta.placeholder = mine ? 'Message' : 'Inject a message as the developer (overrides ' + c.owner + ')';
+  }
+}
+
+async function act(path) {
+  try { await api(path, { method: 'POST', body: { id: convSel } }); if (path === '/api/kill') { convArchived = true; } refresh(); pollConv(); }
+  catch (e) { alert(e.message); }
+}
+
+const toolBlocks = {};
+function addEvent(e) {
+  const box = $('events'); if (!box) return;
+  let n = null;
+  switch (e.kind) {
+    case 'user': {
+      n = el('div', 'ev user');
+      const hn = e.human_name || 'you';
+      n.append(el('div', 'who', (e.from === 'human' ? (e.injected ? hn + ', injected as the developer' : hn) : e.from) + ' · ' + fmtTime(e.time)), el('div', 'bubble', e.text));
+      if (e.injected) n.querySelector('.bubble').style.borderColor = 'var(--accent)';
+      break;
+    }
+    case 'assistant': {
+      n = el('div', 'ev assistant');
+      n.append(el('div', 'who', convSel + ' · ' + fmtTime(e.time)), el('div', 'bubble', e.text));
+      break;
+    }
+    case 'thinking': {
+      n = el('div', 'ev'); const d = el('details', 'think'); d.append(el('summary', null, 'Thinking'), el('pre', null, e.text)); n.append(d); break;
+    }
+    case 'tool_call': {
+      n = el('div', 'ev'); const d = el('details', 'tool');
+      const s = el('summary'); s.append(document.createTextNode('Tool '), el('b', null, e.name), el('span', 'muted', ' · running'));
+      d.append(s, el('div', 'label', 'Input'), el('pre', null, pretty(e.input)));
+      n.append(d); toolBlocks[e.tool_use_id] = { d, s, name: e.name };
+      break;
+    }
+    case 'tool_result': {
+      const tb = toolBlocks[e.tool_use_id];
+      if (tb) {
+        tb.s.lastChild.textContent = e.is_error ? ' · error' : ' · done';
+        if (e.is_error) tb.d.classList.add('err');
+        tb.d.append(el('div', 'label', e.is_error ? 'Error' : 'Result'), el('pre', null, e.text));
+        return;
+      }
+      n = el('div', 'ev'); const d = el('details', 'tool' + (e.is_error ? ' err' : ''));
+      const s = el('summary'); s.append(document.createTextNode('Result of '), el('b', null, e.name)); d.append(s, el('pre', null, e.text)); n.append(d);
+      break;
+    }
+    case 'usage': n = el('div', 'ev usage', fmtK(e.input_tokens) + ' tokens in / ' + fmtK(e.output_tokens) + ' out · cache ' + fmtK(e.cache_read) + ' read / ' + fmtK(e.cache_write) + ' written · context ' + fmtK(e.context_tokens) + (e.stop_reason && e.stop_reason !== 'tool_use' && e.stop_reason !== 'end_turn' ? ' · ' + e.stop_reason : '')); break;
+    case 'notice': n = el('div', 'ev notice ' + (e.level || ''), e.text); break;
+    case 'files': {
+      n = el('div', 'ev assistant');
+      n.append(el('div', 'who', convSel + ' offers ' + (e.files || []).length + ' file(s) for download · ' + fmtTime(e.time)));
+      const card = el('div', 'filecard');
+      if (e.note) card.append(el('div', null, e.note));
+      const cid = convSel;
+      for (const f of e.files || []) {
+        const row = el('div', 'row'); const nm = el('span', 'name', f.path); nm.title = f.path;
+        const d = el('button', 'primary', 'Download'); d.onclick = () => downloadFile(cid, f.path);
+        row.append(nm, el('span', 'small muted', fmtBytes(f.size || 0)), d); card.append(row);
+      }
+      n.append(card); break;
+    }
+    case 'error': n = el('div', 'ev error'); n.append(el('div', 'bubble', e.text)); break;
+    case 'instructions': { n = el('div', 'ev'); const d = el('details', 'box'); d.append(el('summary', null, 'Standing instructions'), el('pre', null, e.text)); n.append(d); break; }
+    case 'compaction': { n = el('div', 'ev'); const d = el('details', 'box'); d.append(el('summary', null, 'Compacted: earlier messages were replaced by this summary (' + fmtK(e.before_tokens) + ' tokens before' + (e.kept ? '; the ' + e.kept + ' kept word for word' : '') + ')'), el('pre', null, e.text)); n.append(d); break; }
+    case 'archived': n = el('div', 'ev archived', 'Archived by ' + (e.by === 'human' ? 'you' : e.by) + ' · ' + fmtTime(e.time)); break;
+    default: n = el('div', 'ev notice', e.kind + ': ' + JSON.stringify(e));
+  }
+  box.append(n);
+}
+
+let convPolling = false;
+async function pollConv() {
+  if (!convSel || convPolling || (tab !== 'convs' && tab !== 'archive')) return;
+  convPolling = true;
+  const id = convSel, from = inst;
+  try {
+    const d = await api('/api/conv?id=' + encodeURIComponent(id) + '&since=' + lastSeq);
+    if (id !== convSel || from !== inst) return;
+    convMeta = d.conv; convArchived = d.conv.archived;
+    const sc = $('scroller');
+    const stick = sc && (sc.scrollHeight - sc.scrollTop - sc.clientHeight < 140 || lastSeq === 0);
+    if (lastSeq === 0 && d.earlier > 0 && $('events')) $('events').append(el('div', 'ev notice', d.earlier.toLocaleString() + ' earlier events are not shown here; the full history is in this conversation\'s transcript.jsonl in the swarm\'s state folder.'));
+    for (const e of d.events || []) { addEvent(e); lastSeq = Math.max(lastSeq, e.seq); }
+    if (tab === 'convs' && d.conv.archived) {
+      // Archived while open here: it leaves the active list, so it leaves this pane too.
+      goneToArchive = { id, inst: from };
+      convSel = null; rememberUi(); renderPane(); renderList(); refresh();
+      return;
+    }
+    renderHead(d.conv);
+    renderTyping(d.conv);
+    if (d.conv.archived && $('composer')) $('composer').remove();
+    if (stick && sc) sc.scrollTop = sc.scrollHeight;
+  } catch (e) {
+    if (e.status === 404 && id === convSel) { convSel = null; renderPane(); }
+  } finally { convPolling = false; }
+}
+
+// ---------- files ----------
+let filesConv = null;
+async function openFiles(path) {
+  filesConv = filesConv && $('filedlg').open ? filesConv : convSel;
+  const id = filesConv;
+  $('file-conv').textContent = id;
+  const list = $('file-list'), body = $('file-body');
+  if (!$('filedlg').open) $('filedlg').showModal();
+  $('file-up').style.display = path ? '' : 'none';
+  if (path) {
+    list.style.display = 'none'; body.style.display = ''; body.textContent = 'Loading...';
+    $('file-path').textContent = path;
+    try { const d = await api('/api/files?id=' + encodeURIComponent(id) + '&path=' + encodeURIComponent(path)); body.textContent = d.text; }
+    catch (e) { body.textContent = e.message; }
+    return;
+  }
+  body.style.display = 'none'; list.style.display = ''; list.textContent = 'Loading...';
+  try {
+    const d = await api('/api/files/list?id=' + encodeURIComponent(id));
+    list.textContent = '';
+    $('file-path').textContent = d.files.length ? d.files.length + ' file(s), ' + fmtBytes(d.total_bytes) + (d.archived ? ' (archived conversation)' : '') : '';
+    $('file-zip').disabled = !d.files.length;
+    if (!d.files.length) { list.append(el('div', 'muted', 'The scratch folder is empty.')); return; }
+    const t = el('table', 'filetable');
+    for (const f of d.files) {
+      const tr = el('tr');
+      const acts = el('td', 'acts');
+      const v = el('button', null, 'View'); v.onclick = () => openFiles(f.path);
+      const dl = el('button', null, 'Download'); dl.onclick = () => downloadFile(id, f.path);
+      acts.append(v, document.createTextNode(' '), dl);
+      tr.append(el('td', 'name', f.path), el('td', 'size', fmtBytes(f.size)), el('td', 'when', fmtTime(f.modified)), acts);
+      t.append(tr);
+    }
+    list.append(t);
+  } catch (e) { list.textContent = e.message; }
+}
+$('file-close').onclick = () => { $('filedlg').close(); filesConv = null; };
+$('file-up').onclick = () => openFiles('');
+$('file-zip').onclick = () => downloadZip(filesConv || convSel);
+
+// ---------- new conversation ----------
+$('newbtn').onclick = () => {
+  const s = st[inst] || {};
+  $('new-inst').textContent = inst;
+  $('f-prefix').textContent = inst + '.';
+  $('f-model').value = s.default_model || 'sonnet';
+  $('f-budget').value = s.tool_budget || 15; budgetNote();
+  $('f-effort').value = s.default_effort || 'medium';
+  effortNote();
+  $('f-nonstop').checked = false; nonstopChanged();
+  $('f-nonstop-at').textContent = fmtK(s.nonstop_compact_at || 800000);
+  $('f-err').textContent = '';
+  $('newdlg').showModal(); $('f-name').focus();
+};
+$('f-cancel').onclick = () => $('newdlg').close();
+const EFFORT_NOTES = {
+  low: 'Low: thinks least. Fastest and cheapest; for quick, mechanical work.',
+  medium: 'Medium: balanced speed, cost and depth. Claude\'s own default, and right for most delegated work.',
+  high: 'High: thinks as much as the task needs. Slower and costlier; for complex reasoning and hard problems.',
+  xhigh: 'Extra high: for long, demanding agentic work. Uses far more output, so cost and time grow a lot.',
+  max: 'Max: no limit on thinking. The slowest and most expensive level; only for the hardest problems.'
+};
+function effortNote() { $('f-effort-note').textContent = EFFORT_NOTES[$('f-effort').value] || ''; }
+$('f-effort').onchange = effortNote;
+function nonstopChanged() {
+  const on = $('f-nonstop').checked;
+  for (const id of ['f-effort-field', 'f-effort-notefield', 'f-budget-field']) $(id).style.display = on ? 'none' : '';
+}
+$('f-nonstop').onchange = nonstopChanged;
+function budgetNote() {
+  const v = $('f-budget').value.trim();
+  $('f-budget-note').textContent = v === '0' ? 'unlimited: the agent never stops to ask about tool calls'
+    : (v === '' ? 'empty = the default' : 'tool calls per message, then the agent stops and asks whether to continue (0 = unlimited)');
+}
+$('f-budget').addEventListener('input', budgetNote);
+$('newform').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const body = { name: $('f-name').value.trim(), model: $('f-model').value, title: $('f-title').value, instructions: $('f-instr').value,
+                 message: $('f-msg').value, nonstop: $('f-nonstop').checked, as: currentHuman() };
+  if (!body.nonstop) {
+    const v = $('f-budget').value.trim();
+    if (v !== '') body.tool_budget = Math.max(0, parseInt(v, 10) || 0);   // empty = server default; 0 = unlimited
+    body.effort = $('f-effort').value;
+  }
+  if (!body.name) { $('f-err').textContent = 'A name is mandatory.'; return; }
+  try {
+    const d = await api('/api/new', { method: 'POST', body });
+    $('newdlg').close();
+    for (const id of ['f-name', 'f-title', 'f-instr', 'f-msg']) $(id).value = '';
+    $('f-effort').value = (st[inst] && st[inst].default_effort) || 'medium';
+    if (tab !== 'convs') setTab('convs'); await refresh(); openConv(d.id, false);
+  } catch (e) { $('f-err').textContent = e.message; }
+};
+
+// ---------- MCP page ----------
+function mcpPage() {
+  const p = el('div', 'page'); const inner = el('div', 'inner'); p.append(inner);
+  inner.append(el('h2', null, 'MCP servers on ' + inst));
+  inner.append(el('p', 'muted', 'Agents on this instance can use every server in its allow list. Servers start on first use and keep running.'));
+  const box = el('div', null, 'Loading...'); inner.append(box);
+  api('/api/mcp').then((d) => {
+    box.textContent = '';
+    box.append(el('p', 'small muted', 'Allow list file: ' + d.config_path));
+    if (d.can_import && inst === HOME) { const w = el('div'); w.style.margin = '0 0 14px'; const b = el('button', 'primary', 'Import from Claude Desktop...'); b.onclick = openImport; w.append(b); box.append(w); }
+    if (!d.servers.length) { box.append(el('p', 'muted', 'The allow list is empty.')); return; }
+    const t = el('table'); const hr = el('tr');
+    for (const h of ['Server', 'Command', 'Status', 'Tools', 'Calls', '']) hr.append(el('th', null, h));
+    t.append(hr);
+    for (const s of d.servers) {
+      const tr = el('tr');
+      const cmd = el('td', 'mono', [s.command].concat(s.args || []).join(' ')); if (s.env_keys && s.env_keys.length) cmd.append(el('div', 'muted', 'env: ' + s.env_keys.join(', ')));
+      const stt = el('td', null, s.status); if (s.error) stt.append(el('div', 'small', s.error));
+      const acts = el('td');
+      const r = el('button', null, 'Restart'); r.onclick = async () => { try { await api('/api/mcp/restart', { method: 'POST', body: { name: s.name } }); renderPane(); } catch (e) { alert(e.message); } };
+      const x = el('button', 'danger', 'Remove'); x.onclick = async () => { if (!confirm('Remove ' + s.name + ' from the allow list?')) return; try { await api('/api/mcp/remove', { method: 'POST', body: { name: s.name } }); renderPane(); } catch (e) { alert(e.message); } };
+      acts.append(r, document.createTextNode(' '), x);
+      tr.append(el('td', 'mono', s.name), cmd, stt, el('td', null, s.tools == null ? '-' : String(s.tools)), el('td', null, String(s.calls)), acts);
+      t.append(tr);
+    }
+    box.append(t);
+  }).catch((e) => { box.textContent = e.message; });
+  return p;
+}
+let impPath = '';
+function impUpdate() {
+  const n = $('imp-list').querySelectorAll('input[type=checkbox]:checked:not(:disabled)').length;
+  $('imp-ok').disabled = n === 0;
+  $('imp-ok').textContent = n ? 'Import ' + n + ' ticked' : 'Import ticked';
+}
+async function impScan(path) {
+  $('imp-err').textContent = ''; $('imp-list').textContent = 'Reading...'; impUpdate();
+  try {
+    const d = await api('/api/mcp/scan', { method: 'POST', body: path ? { path } : {} });
+    const pick = $('imp-pick'); pick.textContent = '';
+    for (const c of d.candidates || []) { const o = el('option', null, c); o.value = c; pick.append(o); }
+    if (d.path && !(d.candidates || []).includes(d.path)) { const o = el('option', null, d.path); o.value = d.path; pick.append(o); }
+    pick.value = d.path || ''; pick.style.display = pick.options.length ? '' : 'none';
+    $('imp-where').textContent = (d.candidates || []).length ? (d.candidates.length + ' config file' + (d.candidates.length > 1 ? 's' : '') + ' found on this computer (newest first).') : 'No config file was found in the usual places. Paste its path above.';
+    impPath = d.path || '';
+    const list = $('imp-list'); list.textContent = '';
+    if (d.error) { list.textContent = d.error; return; }
+    if (!d.found) { list.textContent = ''; return; }
+    if (!d.servers.length) { list.textContent = 'This config lists no MCP servers.'; return; }
+    for (const s of d.servers) {
+      const row = el('label', null); row.style.display = 'flex'; row.style.gap = '8px'; row.style.margin = '6px 0'; row.style.alignItems = 'flex-start';
+      const cb = el('input'); cb.type = 'checkbox'; cb.value = s.name; cb.disabled = s.self || !s.supported; cb.checked = false; cb.onchange = impUpdate;
+      const txt = el('div');
+      txt.append(el('b', 'mono', s.name), el('div', 'small muted mono', [s.command].concat(s.args || []).join(' ')));
+      if (s.self) txt.append(el('div', 'small muted', 'This is the swarm itself; it is never imported.'));
+      else if (!s.supported) txt.append(el('div', 'small muted', 'Not a local command server; not supported.'));
+      else if (s.allowed) txt.append(el('div', 'small muted', 'Already allowed. Tick it to refresh its settings from this file.'));
+      row.append(cb, txt); list.append(row);
+    }
+  } catch (e) { $('imp-list').textContent = e.message; }
+  finally { impUpdate(); }
+}
+async function openImport() {
+  $('imp-path').value = '';
+  $('importdlg').showModal();
+  impScan('');
+}
+$('imp-pick').onchange = () => impScan($('imp-pick').value);
+$('imp-load').onclick = () => { const p = $('imp-path').value.trim(); if (p) impScan(p); };
+$('imp-path').addEventListener('keydown', (ev) => { if (ev.key === 'Enter') { ev.preventDefault(); $('imp-load').click(); } });
+$('imp-cancel').onclick = () => $('importdlg').close();
+$('imp-ok').onclick = async () => {
+  const names = [...$('imp-list').querySelectorAll('input[type=checkbox]:checked:not(:disabled)')].map((c) => c.value);
+  try { await api('/api/mcp/import', { method: 'POST', body: { names, path: impPath } }); $('importdlg').close(); renderPane(); }
+  catch (e) { $('imp-err').textContent = e.message; }
+};
+
+// ---------- remote page (local swarm only) ----------
+function remotePage() {
+  const p = el('div', 'page'); const inner = el('div', 'inner'); p.append(inner);
+  inner.append(el('h2', null, 'Remote swarm'));
+  inner.append(el('p', 'muted', 'A remote swarm runs on a server, so its agents keep working when this computer is off. Connect this computer to one that is already deployed: paste its address and an access key created on that server (./key.sh create). Several computers can connect to the same remote; each of them sees all of its agents.'));
+  const box = el('div', null, 'Loading...'); inner.append(box);
+  api('/api/remotes', {}, HOME).then((d) => {
+    box.textContent = '';
+    const list = d.remotes || [];
+    if (list.length) {
+      for (const r of list) {
+        const t = el('table'); const hr = el('tr');
+        for (const h of ['Name', 'Address', 'Key', 'Status', '']) hr.append(el('th', null, h));
+        const tr = el('tr');
+        const status = r.error ? r.error : (r.counts ? r.counts.active + ' active, ' + r.counts.working + ' working, ' + r.counts.archived + ' archived' : 'checking...');
+        const acts = el('td');
+        if (r.source === 'env') acts.append(el('span', 'small muted', 'set in .env'));
+        else { const x = el('button', 'danger', 'Remove'); x.onclick = async () => {
+          if (!confirm('Disconnect this computer from "' + r.name + '"?\n\nThe remote and its agents keep running; you can connect again later with an access key.')) return;
+          try { await api('/api/remotes/remove', { method: 'POST', body: { name: r.name } }, HOME); await refresh(); renderPane(); } catch (e) { alert(e.message); } }; acts.append(x); }
+        tr.append(el('td', 'mono', r.name), el('td', 'mono', r.url), el('td', 'mono', r.key_hint || ''), el('td', null, status), acts);
+        t.append(hr, tr); box.append(t);
+      }
+      box.append(el('p', 'small muted', 'Its agents are named ' + list[0].name + '.<agent>. Agents your local conversations start there are owned by "<conversation>.' + (d.host || 'this-pc') + '", so another computer\'s conversations never clash with yours. Managing several remotes is planned.'));
+      return;
+    }
+    const f = el('form'); f.className = 'remoteform';
+    const fu = el('div', 'field'); const lu = el('label', null, 'Address'); const iu = el('input'); iu.id = 'r-url'; iu.placeholder = 'https://swarm.example.com'; iu.spellcheck = false; fu.append(lu, iu);
+    const fk = el('div', 'field'); const lk = el('label', null, 'Access key'); const ik = el('input'); ik.id = 'r-key'; ik.type = 'password'; ik.placeholder = 'swk_...'; ik.autocomplete = 'off'; fk.append(lk, ik);
+    const err = el('div', 'formerr');
+    const go = el('button', 'primary', 'Connect'); go.type = 'submit';
+    f.append(fu, fk, err, go);
+    f.onsubmit = async (ev) => {
+      ev.preventDefault(); err.textContent = ''; go.disabled = true; go.textContent = 'Checking the remote...';
+      try { const r = await api('/api/remotes/add', { method: 'POST', body: { url: iu.value.trim(), key: ik.value.trim() } }, HOME); await refresh(); renderPane(); }
+      catch (e) { err.textContent = e.message; }
+      finally { go.disabled = false; go.textContent = 'Connect'; }
+    };
+    box.append(f);
+  }).catch((e) => { box.textContent = e.message; });
+  return p;
+}
+
+// ---------- log page ----------
+function logPage() {
+  const p = el('div', 'page'); const inner = el('div', 'inner logs'); inner.id = 'logbox'; p.append(inner);
+  if (inst !== HOME) inner.append(el('p', 'muted', 'The log below is this computer\'s. The remote server\'s log is in its container (docker logs).'));
+  for (const l of logs) inner.append(logLine(l));
+  setTimeout(() => { p.scrollTop = p.scrollHeight; }, 0);
+  return p;
+}
+function logLine(l) { const r = el('div', 'logline ' + (l.level || '')); r.textContent = new Date(l.time).toLocaleTimeString() + '  ' + l.text; return r; }
+
+// ---------- tabs and refresh ----------
+// ---------- tabs and instances, remembered until the window closes ----------
+let memo = { tab: 'convs', inst: null, sel: {} };
+try { const m = JSON.parse(sessionStorage.getItem('agent-swarm-ui') || 'null'); if (m && m.sel) memo = m; } catch {}
+function rememberUi() {
+  memo.tab = tab; memo.inst = inst;
+  if (inst && (tab === 'convs' || tab === 'archive')) memo.sel[inst + '|' + tab] = convSel;
+  try { sessionStorage.setItem('agent-swarm-ui', JSON.stringify(memo)); } catch {}
+}
+function setTab(t) {
+  tab = t;
+  for (const x of document.querySelectorAll('.tab[data-tab]')) x.classList.toggle('sel', x.dataset.tab === t);
+  $('side').style.display = (t === 'convs' || t === 'archive') ? '' : 'none';
+  const keep = (t === 'convs' || t === 'archive') ? (memo.sel[inst + '|' + t] || null) : null;
+  convSel = null; render(); refresh();
+  if (keep) openConv(keep, t === 'archive'); else rememberUi();
+}
+function switchInstance(name) {
+  if (inst === name && tab === 'convs') return;
+  rememberUi();
+  inst = name;
+  setTab('convs');   // a different instance always opens on its conversations
+}
+for (const b of document.querySelectorAll('.tab[data-tab]')) {
+  b.onclick = () => { if (tab !== b.dataset.tab) { rememberUi(); setTab(b.dataset.tab); } };
+}
+function render() { renderInstances(); renderList(); renderPane(); }
+
+// ---------- human names (cosmetic) ----------
+let humans = { names: [], current: '' };
+function currentHuman() { return humans.current || ''; }
+function renderWhoami() {
+  const sel = $('whoami'); if (document.activeElement === sel) return;
+  const key = JSON.stringify(humans); if (sel.dataset.key === key) return; sel.dataset.key = key;
+  sel.textContent = '';
+  sel.append(new Option('human (no name)', ''));
+  for (const n of humans.names) sel.append(new Option(n, n));
+  sel.append(new Option('Edit names...', '__edit'));
+  sel.value = humans.current || '';
+}
+async function saveHumans(h) {
+  humans = await api('/api/humans', { method: 'POST', body: h }, HOME);
+  $('whoami').dataset.key = ''; renderWhoami(); renderNamesList();
+}
+$('whoami').onchange = async () => {
+  const v = $('whoami').value;
+  if (v === '__edit') { $('whoami').value = humans.current || ''; openNames(); return; }
+  try { await saveHumans({ names: humans.names, current: v }); } catch (e) { alert(e.message); }
+};
+function renderNamesList() {
+  const box = $('names-list'); box.textContent = '';
+  if (!humans.names.length) box.append(el('div', 'small muted', 'No names yet. Without one, your messages are signed just "human".'));
+  for (const n of humans.names) {
+    const r = el('div', 'nm'); r.append(el('span', null, n + (n === humans.current ? '  (current)' : '')));
+    const x = el('button', null, 'Remove');
+    x.onclick = async () => { try { await saveHumans({ names: humans.names.filter(m => m !== n), current: humans.current === n ? '' : humans.current }); } catch (e) { $('names-err').textContent = e.message; } };
+    r.append(x); box.append(r);
+  }
+}
+function openNames() { $('names-err').textContent = ''; $('names-new').value = ''; renderNamesList(); $('namesdlg').showModal(); $('names-new').focus(); }
+async function addName() {
+  const v = $('names-new').value.trim().toLowerCase().replace(/^human-/, '');
+  if (!v) return;
+  if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(v)) { $('names-err').textContent = 'Use lowercase letters, digits, "_" or "-" (max 32), starting with a letter or digit.'; return; }
+  try { await saveHumans({ names: humans.names.concat('human-' + v), current: 'human-' + v }); $('names-new').value = ''; $('names-err').textContent = ''; }
+  catch (e) { $('names-err').textContent = e.message; }
+}
+$('names-add').onclick = addName;
+$('names-new').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addName(); } });
+$('names-close').onclick = () => $('namesdlg').close();
+
+function setStatus(ok, text) { $('dot').className = 'dot ' + (ok ? 'ok' : 'bad'); $('status').textContent = text; }
+
+let refreshing = false;
+let refreshAgain = false;
+async function refresh() {
+  if (refreshing) { refreshAgain = true; return; }   // run once more when this one ends
+  refreshing = true;
+  try {
+    const d = await api('/api/state?logSince=' + lastLogId, {}, HOME || 'self');
+    if (!HOME) { HOME = d.instance; inst = HOME; }
+    st[HOME] = Object.assign(st[HOME] || {}, d);
+    if (d.humans) { humans = d.humans; renderWhoami(); }
+    for (const l of d.logs || []) { logs.push(l); lastLogId = Math.max(lastLogId, l.id); if (tab === 'log' && inst === HOME && $('logbox')) { $('logbox').append(logLine(l)); } }
+    if (logs.length > 1000) logs = logs.slice(-1000);
+    if (logs.length) $('lastlog').textContent = logs[logs.length - 1].text;
+    setStatus(true, (d.api_key ? '' : 'no API key! ') + 'connected to ' + HOME + (MODE === 'local' ? '' : ' (remote)'));
+    // Answers are stored under the instance they were asked for: the selection
+    // may change while a request is on its way (fast clicks between chips).
+    const target = inst;
+    if (target !== HOME) {
+      try { const r = await api('/api/state?logSince=999999999', {}, target); st[target] = Object.assign(st[target] || {}, r, { at: Date.now() }); }
+      catch (e) { st[target] = Object.assign(st[target] || {}, { convs: [], error: e.message }); }
+    }
+    if (tab === 'archive') {
+      try { const a = await api('/api/archive', {}, target); st[target] = Object.assign(st[target] || {}, { archive: a.items }); } catch {}
+    }
+    renderInstances(); renderList();
+  } catch (e) {
+    setStatus(false, e.status === 403 ? 'another swarm process owns this page now: use its window' : (MODE === 'local' ? 'page closed: run open-webview.bat or ask an agent to call debug_open_webview' : 'disconnected: ' + e.message));
+    if (e.status === 401 && MODE === 'remote') location.href = '/login';
+  } finally {
+    refreshing = false;
+    if (refreshAgain) { refreshAgain = false; refresh(); }
+  }
+}
+
+// The first state call must hit this server, whatever instance is selected.
+const _apiPath = apiPath;
+apiPath = function (path, instance) { if (instance === 'self') return path; return _apiPath(path, instance); };
+
+if (MODE === 'remote') { $('logout').style.display = ''; $('remotetab').style.display = 'none'; }
+else addEventListener('pagehide', () => { navigator.sendBeacon('/api/bye?token=' + TOKEN); });
+
+refresh().then(() => {
+  // Back after a reload in the same window: the same instance, tab and conversation.
+  const names = [HOME].concat(((st[HOME] || {}).remotes || []).map(r => r.name));
+  if (memo.inst && names.includes(memo.inst)) inst = memo.inst;
+  const t = memo.tab && document.querySelector('.tab[data-tab="' + memo.tab + '"]') && !(memo.tab === 'remote' && MODE === 'remote') ? memo.tab : 'convs';
+  setTab(t);
+});
+setInterval(refresh, 2000);
+setInterval(pollConv, 1000);
+</script>
+</body>
+</html>

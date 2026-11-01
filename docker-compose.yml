@@ -1,0 +1,19 @@
+# The swarm itself. run.sh adds one of:
+#   docker-compose.bundled-caddy.yml  its own Caddy on 443 (Let's Encrypt)
+#   docker-compose.shared-caddy.yml   joins the network of a Caddy you already run
+services:
+  swarm:
+    build: .
+    image: agent-swarm-mcp:local
+    container_name: agent-swarm
+    restart: unless-stopped
+    init: true
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    env_file: config.env
+    environment:
+      SWARM_MODE: remote
+      SWARM_PUBLIC_URL: ${SWARM_PUBLIC_URL:-}
+      SWARM_STATE_DIR: /app/state
+      SWARM_LISTEN: http://+:8780/
+    volumes:
+      - ./state:/app/state
