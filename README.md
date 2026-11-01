@@ -24,6 +24,11 @@ server, has each one echo its name, then archives them after 20 seconds.*
   install, no dependencies. The remote image runs the same script on
   PowerShell 7.
 
+> [!NOTE]
+> **Maintainer's note**
+>
+> Hi! Obviously, everything in this README is written by an AI, but this one paragraph is fully mine to write. I built this tool because I realized my Claude subscription came with some API credits that were just sitting there, unused. I wanted to put them to work by automating the agentic tasks I do every day. Along the way, it grew into a full harness that can do pretty much anything, as long as there's an MCP server for it to talk to. Set your API key, run the webview .bat file on a Windows PC, and you're good to go: there are no dependencies. The UI will feel familiar if you've used any other AI chat app. Ask it what it can do, have conversations, build automations. Hook it into your existing AI tools to spawn agents on demand without ever opening the admin UI, or deploy it to a remote server so your agents keep running while your computer is off. I use it to drive Unreal Engine, Blender and my own small MCP toolchain, which lets me spend API credits instead of subscription tokens on the same kind of work I've been doing with my subscription for a long time.
+
 ## How it works
 
 **Agents and names.** Every agent has a mandatory, unique name. The swarm adds
