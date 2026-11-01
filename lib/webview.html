@@ -479,7 +479,10 @@ async function downloadFrom(path, fallbackName) {
   setTimeout(() => URL.revokeObjectURL(url), 30000);
 }
 function downloadFile(id, path) { return downloadFrom('/api/download?id=' + encodeURIComponent(id) + '&path=' + encodeURIComponent(path), path.split('/').pop()).catch(e => alert(e.message)); }
-function downloadZip(id) { return downloadFrom('/api/download-zip?id=' + encodeURIComponent(id), id + '-files.zip').catch(e => alert(e.message)); }
+function downloadZip(id, paths) {
+  const q = (paths || []).map(p => '&path=' + encodeURIComponent(p)).join('');
+  return downloadFrom('/api/download-zip?id=' + encodeURIComponent(id) + q, id + (paths && paths.length ? '-download.zip' : '-files.zip')).catch(e => alert(e.message));
+}
 
 // "Please wait" while the agent thinks, uses a tool or writes its reply.
 const STEP_MARK = { done: '\u2713', in_progress: '\u25B8', pending: '\u25CB', skipped: '\u2013' };
@@ -636,6 +639,14 @@ function addEvent(e) {
         const row = el('div', 'row'); const nm = el('span', 'name', f.path); nm.title = f.path;
         const d = el('button', 'primary', 'Download'); d.onclick = () => downloadFile(cid, f.path);
         row.append(nm, el('span', 'small muted', fmtBytes(f.size || 0)), d); card.append(row);
+      }
+      if ((e.files || []).length > 1) {
+        // Several files offered together: one click for all of them, as a zip.
+        const total = e.files.reduce((a, f) => a + (f.size || 0), 0);
+        const all = el('div', 'row'); all.style.cssText = 'border-top:1px solid var(--line);margin-top:6px;padding-top:8px';
+        const z = el('button', 'primary', 'Download all (.zip)'); z.onclick = () => downloadZip(cid, e.files.map(f => f.path));
+        all.append(el('span', 'name', e.files.length + ' files'), el('span', 'small muted', fmtBytes(total)), z);
+        card.append(all);
       }
       n.append(card); break;
     }

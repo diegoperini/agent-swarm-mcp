@@ -1321,12 +1321,17 @@ function Get-ScratchFileList([string]$Root) {
     return $l.ToArray()   # callers wrap it in @()
 }
 
-function New-ScratchZip([string]$Root) {
+function New-ScratchZip([string]$Root, [string[]]$Only = $null) {
     $ms = New-Object System.IO.MemoryStream
     $zip = New-Object System.IO.Compression.ZipArchive($ms, [System.IO.Compression.ZipArchiveMode]::Create, $true)
     try {
         if ([System.IO.Directory]::Exists($Root)) {
-            foreach ($f in [System.IO.Directory]::GetFiles($Root, '*', [System.IO.SearchOption]::AllDirectories)) {
+            $list = [System.IO.Directory]::GetFiles($Root, '*', [System.IO.SearchOption]::AllDirectories)
+            if ($Only) {
+                # Just the given files (e.g. the ones an agent offered together).
+                $list = @(foreach ($p in $Only) { $full = Resolve-ScratchPath $Root $p; if (-not [System.IO.File]::Exists($full)) { throw "No such file: $p" }; $full })
+            }
+            foreach ($f in $list) {
                 if ($f.EndsWith('.tmp')) { continue }
                 $e = $zip.CreateEntry((Get-ScratchRel $Root $f), [System.IO.Compression.CompressionLevel]::Optimal)
                 $e.LastWriteTime = (New-Object System.IO.FileInfo $f).LastWriteTime
@@ -1728,8 +1733,10 @@ function Invoke-WebApi($Ctx, [string]$Path) {
         }
         'GET /api/download-zip' {
             $sc = Get-ConvScratch ([string]$q['id'])
-            $bytes = New-ScratchZip $sc.Root
-            Send-HttpBytes $res 200 'application/zip' $bytes @{ 'Content-Disposition' = (Get-AttachmentHeader "$($sc.Id)-files.zip") }; return
+            $only = @($q.GetValues('path') | Where-Object { $_ })
+            if ($only.Count) { $bytes = New-ScratchZip $sc.Root $only; $zipName = "$($sc.Id)-download.zip" }
+            else { $bytes = New-ScratchZip $sc.Root; $zipName = "$($sc.Id)-files.zip" }
+            Send-HttpBytes $res 200 'application/zip' $bytes @{ 'Content-Disposition' = (Get-AttachmentHeader $zipName) }; return
         }
         'POST /api/upload-file' { Start-Upload $Ctx; return }   # answered by Update-UploadTasks
         'GET /api/mcp' { Send-JsonHttp $res 200 @{ servers = @(Get-McpStatusList); config_path = (Get-McpConfigPath); can_import = ($script:S.Mode -eq 'local') }; return }

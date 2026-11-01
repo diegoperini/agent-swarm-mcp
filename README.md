@@ -168,11 +168,13 @@ or all files. Regular expressions give up after 2 seconds.
 **Use your other tools,** when you allow them: the MCP servers in the
 swarm's allow list (see [below](#letting-agents-use-your-other-mcp-servers)).
 
-**Keep you informed.** On long or complex tasks, agents report progress
-without ending their turn: a one-line status, and their plan as a checklist
-of steps (pending, in progress, done, skipped). You see it live in the web
-view; the owner gets it from `agent_send` and `agent_read`. Reporting doesn't
-use the tool budget.
+**Keep you informed.** On programming and any other task with more than one
+step, agents show their plan as a checklist of steps (pending, in progress,
+done, skipped) before they start, and update it with a one-line status after
+every step, without ending their turn. You see it live in the web view; the
+owner gets it from `agent_send` and `agent_read`. Reporting doesn't use the
+tool budget. If an agent works for a while without reporting, the swarm
+reminds it.
 
 **Share files.** An agent can offer files it made for download in the web
 view, and receives the files you attach to messages.
@@ -307,7 +309,8 @@ it's closed.
   message tells the agent which files arrived. Agents read text files; other
   files are kept for MCP tools that can use them.
 - **Downloads:** when an agent offers files, a download card appears in the
-  conversation. **Files** shows any agent's scratch folder, active or
+  conversation, with a button per file and, for several files, **Download
+  all (.zip)**. **Files** shows any agent's scratch folder, active or
   archived: view a file, download it, or download everything as a zip.
 - **Archive:** archived conversations, read-only, with their full history.
 - **MCP servers:** the allow list, each server's status, tools and calls, and
