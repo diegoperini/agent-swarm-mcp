@@ -56,6 +56,11 @@
   .item:hover { background: var(--soft); }
   .item.sel { background: var(--sel); }
   .item .nm { font-weight: 600; font-family: ui-monospace, Consolas, monospace; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item.child { padding-left: 30px; position: relative; }
+  .item.child::before { content: ''; position: absolute; left: 16px; top: 0; bottom: 0; border-left: 2px solid var(--line); }
+  .item.child.last::before { bottom: 50%; }
+  .item.child::after { content: ''; position: absolute; left: 16px; top: 50%; width: 8px; border-top: 2px solid var(--line); }
+  .pill.remote { background: transparent; border: 1px solid var(--line); }
   .item .sub { font-size: 12px; color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; }
   .pill { font-size: 11px; padding: 0 7px; border-radius: 999px; background: var(--soft); white-space: nowrap; }
   .pill.working { background: var(--warn); color: #1b1a18; }
@@ -142,6 +147,9 @@
   .typing-wrap .plan { margin-top: 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); max-width: 560px; }
   .typing-wrap .plan .bar { height: 4px; border-radius: 2px; background: var(--soft); overflow: hidden; margin-top: 6px; }
   .typing-wrap .plan .bar div { height: 100%; background: var(--accent); transition: width .4s; }
+  #queued .ev.user .bubble { opacity: .65; border: 1px dashed var(--muted); background: transparent; }
+  #queued .who::after { content: ' \00b7  sent, waiting to be read'; font-style: italic; }
+  #queued { max-width: 920px; margin: -8px auto 0; padding: 0 16px 8px; }
   .composer .chips { max-width: 920px; margin: 0 auto; padding: 8px 16px 0; display: flex; gap: 6px; flex-wrap: wrap; }
   .composer .chips:empty { display: none; }
   .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); font-size: 12px; max-width: 320px; }
@@ -265,6 +273,20 @@
   <div class="dlg-actions"><button type="button" id="file-zip">Download all (.zip)</button><span style="flex:1"></span><button type="button" id="file-up">Back to the list</button><button type="button" id="file-close">Close</button></div>
 </dialog>
 
+<dialog id="tunedlg" style="width:min(460px,96vw)">
+  <h2>Settings of <span id="tune-conv" class="mono"></span></h2>
+  <p class="small muted" id="tune-hint"></p>
+  <div class="field"><label for="tune-effort">Effort</label><select id="tune-effort">
+    <option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select>
+    <span class="note" id="tune-effort-note"></span></div>
+  <div class="field"><label class="check"><input type="checkbox" id="tune-nonstop"> Non-stop mode</label>
+    <span class="note" id="tune-nonstop-note"></span></div>
+  <div class="field" id="tune-budget-field"><label for="tune-budget">Tool budget (tool calls per message, 0 = unlimited)</label>
+    <input id="tune-budget" type="number" min="0" max="10000"></div>
+  <div class="formerr" id="tune-err"></div>
+  <div class="dlg-actions"><button type="button" id="tune-cancel">Cancel</button><button class="primary" type="button" id="tune-save">Apply</button></div>
+</dialog>
+
 <dialog id="namesdlg" style="width:min(460px,96vw)">
   <h2>Your names</h2>
   <p class="small muted">Names sign your messages, so agents and their owners see which person wrote them. They are cosmetic: every human using this web view has the same say. Each one is shown as <code>human-&lt;name&gt;</code>.</p>
@@ -348,6 +370,7 @@ function renderInstances() {
 }
 
 // ---------- sidebar ----------
+function helperCount(id) { const s = st[inst]; return s && s.convs ? s.convs.filter(x => x.owner === id).length : 0; }
 function renderList() {
   const list = $('list'); list.textContent = '';
   const s = st[inst];
@@ -356,16 +379,54 @@ function renderList() {
   if (!s) { list.append(el('div', 'empty', inst === HOME ? 'Loading...' : 'Loading ' + inst + '...')); return; }
   const rows = tab === 'archive' ? (s.archive || []) : (s.convs || []);
   if (!rows.length) { list.append(el('div', 'empty', tab === 'archive' ? 'Nothing archived yet.' : 'No conversations. Start one with New.')); return; }
-  for (const c of rows) {
-    const it = el('div', 'item' + (c.id === convSel ? ' sel' : ''));
-    it.append(el('div', 'nm', c.id));
+  // Helpers a conversation spawned (owner = that conversation) are nested under it.
+  const ids = new Set(rows.map(c => c.id));
+  const kids = {};
+  for (const c of rows) if (c.owner !== c.id && ids.has(c.owner)) (kids[c.owner] = kids[c.owner] || []).push(c);
+  const ordered = [];
+  const walk = (c, depth, last, seen) => {
+    if (seen.has(c.id)) return; seen.add(c.id);
+    ordered.push({ c, depth, last });
+    const k = kids[c.id] || [];
+    const rk = tab === 'convs' ? (c.remote_children || []) : [];
+    k.forEach((x, i) => walk(x, depth + 1, i === k.length - 1 && !rk.length, seen));
+    rk.forEach((r, i) => ordered.push({ r, depth: depth + 1, last: i === rk.length - 1 }));
+  };
+  const seen = new Set();
+  for (const c of rows) if (!(c.owner !== c.id && ids.has(c.owner))) walk(c, 0, false, seen);
+  for (const c of rows) if (!seen.has(c.id)) walk(c, 0, false, seen);
+  for (const { c, r, depth, last } of ordered) {
+    if (r) {   // a remote agent this conversation spawned: it lives on its remote swarm
+      const it = el('div', 'item child remote-child' + (last ? ' last' : ''));
+      if (depth > 1) it.style.paddingLeft = (30 + (depth - 1) * 14) + 'px';
+      it.append(el('div', 'nm', r.id));
+      const sub = el('div', 'sub');
+      sub.append(el('span', 'pill ' + r.status, r.status));
+      if (r.nonstop) sub.append(el('span', 'pill nonstop', r.paused ? 'non-stop · paused' : 'non-stop'));
+      if (r.model) sub.append(el('span', null, r.model));
+      sub.append(el('span', 'pill remote', 'remote: ' + r.remote));
+      it.append(sub);
+      it.title = 'Runs on the remote swarm ' + r.remote + '. Click to open it there.';
+      it.onclick = () => { rememberUi(); memo.sel[r.remote + '|convs'] = r.id; switchInstance(r.remote); };
+      list.append(it);
+      continue;
+    }
+    const it = el('div', 'item' + (depth ? ' child' : '') + (depth && last ? ' last' : '') + (c.id === convSel ? ' sel' : ''));
+    if (depth > 1) it.style.paddingLeft = (30 + (depth - 1) * 14) + 'px';
+    const nk = (kids[c.id] || []).length;
+    const nm = el('div', 'nm', c.id);
+    if (nk) nm.title = nk + ' helper agent(s)';
+    it.append(nm);
     const sub = el('div', 'sub');
     if (tab === 'archive') {
-      sub.append(el('span', null, c.model), el('span', null, 'by ' + c.owner), el('span', null, 'archived ' + fmtTime(c.archived_at)));
+      sub.append(el('span', null, c.model), el('span', null, depth ? 'helper' : 'by ' + c.owner), el('span', null, 'archived ' + fmtTime(c.archived_at)));
     } else {
       sub.append(el('span', 'pill ' + c.status, c.status === 'awaiting_confirmation' ? 'waiting for go-ahead' : c.status));
       if (c.nonstop) sub.append(el('span', 'pill nonstop', c.paused ? 'non-stop · paused' : 'non-stop'));
-      sub.append(el('span', null, c.model), el('span', null, c.owner === 'human' ? 'yours' : 'by ' + c.owner), el('span', null, c.context_percent + '% ctx'));
+      sub.append(el('span', null, c.model), el('span', null, c.owner === 'human' ? 'yours' : depth ? 'helper' : 'by ' + c.owner), el('span', null, c.context_percent + '% ctx'));
+      const nr = (c.remote_children || []).length;
+      const kidsTxt = [nk ? nk + (nk === 1 ? ' helper' : ' helpers') : '', nr ? nr + ' remote' : ''].filter(Boolean).join(', ');
+      if (kidsTxt) sub.append(el('span', null, kidsTxt));
       if (c.phase) sub.append(el('span', null, c.phase));
     }
     it.append(sub);
@@ -377,7 +438,7 @@ function renderList() {
 
 // ---------- conversation pane ----------
 function openConv(id, archived) {
-  goneToArchive = null; planKey = '';
+  goneToArchive = null; planKey = ''; queuedKey = ''; seenMsgIds.clear();
   convSel = id; convArchived = archived; lastSeq = 0; convMeta = null; headKey = ''; compacting = null;
   rememberUi();
   renderPane(); renderList(); pollConv();
@@ -408,7 +469,8 @@ function renderPane() {
   typing.append(dots, el('span', null, ''));
   const plan = el('div', 'plan'); plan.id = 'plan'; plan.style.display = 'none';
   wrap.append(typing, plan);
-  sc.append(evs, wrap);
+  const queued = el('div'); queued.id = 'queued';
+  sc.append(evs, queued, wrap);
   pane.append(head, sc);
   if (!convArchived) {
     const comp = el('div', 'composer'); comp.id = 'composer';
@@ -665,7 +727,23 @@ function renderTyping(c) {
   t.lastChild.textContent = label + '...';
 }
 
-let goneToArchive = null;   // the conversation that was open on the Conversations tab when it got archived
+let goneToArchive = null;
+const seenMsgIds = new Set();
+let queuedKey = '';
+// Messages already sent but not yet read by the agent: shown dimmed under the transcript until they arrive.
+function renderQueued(list) {
+  const box = $('queued'); if (!box) return;
+  const items = (list || []).filter(q => !seenMsgIds.has(q.msg_id));
+  const key = JSON.stringify(items.map(q => q.msg_id));
+  if (key === queuedKey) return; queuedKey = key;
+  box.textContent = '';
+  for (const q of items) {
+    const n = el('div', 'ev user');
+    const who = q.from === 'human' ? (q.human_name || 'you') : q.from;
+    n.append(el('div', 'who', who + ' \u00b7 ' + fmtTime(q.time)), mdNode('bubble', q.text));
+    box.append(n);
+  }
+}   // the conversation that was open on the Conversations tab when it got archived
 
 let headKey = '', compacting = null;
 function renderHead(c) {
@@ -691,6 +769,8 @@ function renderHead(c) {
   const files = el('button', null, 'Files'); files.onclick = () => openFiles('');
   a.append(files);
   if (!c.archived) {
+    const tn = el('button', null, 'Settings'); tn.title = 'Change effort, tool budget and non-stop mode, also while it works';
+    tn.onclick = () => openTune(c); a.append(tn);
     if (c.status === 'working') { const s = el('button', null, c.nonstop ? 'Pause' : 'Stop'); s.title = c.nonstop ? 'Pause non-stop work; any message resumes it' : 'Stop the running turn'; s.onclick = () => act('/api/stop'); a.append(s); }
     { const k = el('button', null, compacting ? 'Compacting...' : 'Compact');
       k.disabled = !!compacting || (c.status === 'working' && !c.nonstop);
@@ -704,7 +784,7 @@ function renderHead(c) {
       a.append(k); }
     const x = el('button', 'danger', 'Archive'); x.onclick = () => {
       const who = c.owner === 'human' ? '' : '\n\nThis conversation belongs to ' + c.owner + '; archiving it ends that agent\'s work.';
-      if (confirm('Archive ' + c.id + '? It stops, keeps its full history, and moves to the Archive.' + (c.children && c.children.length ? '\nIts remote agents are killed too.' : '') + who)) act('/api/kill');
+      if (confirm('Archive ' + c.id + '? It stops, keeps its full history, and moves to the Archive.' + (c.children && c.children.length ? '\nIts remote agents are killed too.' : '') + (helperCount(c.id) ? '\nIts ' + helperCount(c.id) + ' local helper agent(s) are archived with it.' : '') + who)) act('/api/kill');
     };
     a.append(x);
   }
@@ -734,6 +814,7 @@ function addEvent(e) {
   let n = null;
   switch (e.kind) {
     case 'user': {
+      if (e.msg_id) seenMsgIds.add(e.msg_id);
       n = el('div', 'ev user');
       const hn = e.human_name || 'you';
       n.append(el('div', 'who', (e.from === 'human' ? (e.injected ? hn + ', injected as the developer' : hn) : e.from) + ' · ' + fmtTime(e.time)), mdNode('bubble', e.text));
@@ -827,6 +908,7 @@ async function pollConv() {
     }
     renderHead(d.conv);
     renderTyping(d.conv);
+    renderQueued(d.queued);
     if (d.conv.archived && $('composer')) $('composer').remove();
     if (stick && sc) sc.scrollTop = sc.scrollHeight;
   } catch (e) {
@@ -1128,6 +1210,41 @@ async function addName() {
 $('names-add').onclick = addName;
 $('names-new').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); addName(); } });
 $('names-close').onclick = () => $('namesdlg').close();
+
+// ---------- effort and tool budget, changeable at any time ----------
+let tuneConv = null;
+function openTune(c) {
+  tuneConv = c.id;
+  $('tune-conv').textContent = c.id; $('tune-err').textContent = '';
+  $('tune-effort').value = c.effort || 'medium'; tuneEffortNote();
+  $('tune-nonstop').checked = !!c.nonstop; tuneWasNonstop = !!c.nonstop; tuneNonstopUi();
+  $('tune-budget').value = c.tool_budget;
+  $('tune-hint').textContent = c.status === 'working' ? 'It is working: changes apply from its next step.' : 'Changes apply to its next reply.';
+  $('tunedlg').showModal();
+}
+let tuneWasNonstop = false;
+function tuneNonstopUi() {
+  const on = $('tune-nonstop').checked;
+  $('tune-budget-field').style.display = on ? 'none' : '';
+  $('tune-nonstop-note').textContent = on
+    ? (tuneWasNonstop ? 'It works continuously, with no tool budget, until paused or archived.' : 'It starts working continuously right away, with no tool budget, and keeps using tokens until you pause or archive it. Messages reach it between its steps.')
+    : (tuneWasNonstop ? 'It finishes the step it is on, reports, and then waits for messages, with the tool budget below.' : 'Off: it stops after each task, within its tool budget.');
+}
+$('tune-nonstop').onchange = tuneNonstopUi;
+function tuneEffortNote() { $('tune-effort-note').textContent = EFFORT_NOTES[$('tune-effort').value] || ''; }
+$('tune-effort').onchange = tuneEffortNote;
+$('tune-cancel').onclick = () => $('tunedlg').close();
+$('tune-save').onclick = async () => {
+  const body = { id: tuneConv, effort: $('tune-effort').value, nonstop: $('tune-nonstop').checked, as: currentHuman() };
+  if (body.nonstop && !tuneWasNonstop && !confirm('Switch ' + tuneConv + ' to non-stop mode?\n\nIt works and spends tokens continuously until you pause or archive it.')) return;
+  if (!body.nonstop) {
+    const v = $('tune-budget').value.trim();
+    if (!/^\d+$/.test(v) || +v > 10000) { $('tune-err').textContent = 'The tool budget is a whole number from 0 (unlimited) to 10000.'; return; }
+    body.tool_budget = +v;
+  }
+  try { await api('/api/settings', { method: 'POST', body }); $('tunedlg').close(); headKey = ''; refresh(); pollConv(); }
+  catch (e) { $('tune-err').textContent = e.message; }
+};
 
 function setStatus(ok, text) { $('dot').className = 'dot ' + (ok ? 'ok' : 'bad'); $('status').textContent = text; }
 

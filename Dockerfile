@@ -36,6 +36,10 @@ WORKDIR /app
 COPY mcp-server.ps1 system-prompt.md LICENSE NOTICE ./
 COPY lib/ lib/
 COPY context/ context/
+# Read-only reference for agents asked about agent-swarm itself (swarm_files):
+# the README, settings examples and deploy files. No secrets are among them.
+COPY README.md .env.example config.env.example mcp-server.bat open-webview.bat Dockerfile docker-compose.yml docker-compose.bundled-caddy.yml docker-compose.shared-caddy.yml run.sh deploy.sh key.sh .gitattributes .gitignore .dockerignore ./
+COPY caddy/Caddyfile caddy/site.caddy.example caddy/
 
 # Plain HTTP inside the container only: Caddy terminates HTTPS in front of it.
 EXPOSE 8780

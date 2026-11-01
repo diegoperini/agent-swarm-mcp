@@ -49,7 +49,12 @@ server, has each one echo its name, then archives them after 20 seconds.*
 - **Calling agent:** one of *your* AI agents (in Claude Desktop, Claude Code
   or another MCP client) that uses the swarm through its MCP tools.
 - **Owner:** whoever started a conversation: you, from the web view, or a
-  calling agent.
+  calling agent, or (for helpers and remote agents) the conversation that
+  started it.
+- **Main conversation:** a conversation you started in the web view.
+- **Helper:** an agent a main conversation started on the same swarm.
+- **Remote agent:** an agent a local main conversation started on the
+  remote swarm.
 - **You / the developer:** the person at the web view. You can step into any
   conversation, and your word overrides the owner's.
 
@@ -121,7 +126,7 @@ see [Letting agents use your other MCP servers](#letting-agents-use-your-other-m
 | Files | A scratch folder on your computer | A scratch folder on the server |
 | You use them from | The web view on your computer | The remote's own web view, or your local web view (click the remote's chip) |
 | Your AI tools use them through | `mcp-server.bat` (Claude Desktop, Claude Code, any MCP client) | A Claude custom connector (HTTPS, access key) |
-| Started by | You, and calling agents | You, calling agents using the connector, and local conversations you started, when you ask them to |
+| Started by | You, calling agents, and (as helpers) conversations you started, when you ask them to | You, calling agents using the connector, and local conversations you started, when you ask them to (helpers too, if you turn them on) |
 | Good for | Work that needs tools on your computer: driving Unreal Engine or Blender, editing local projects | Long or always-on work on text and files: non-stop agents, batch text processing, jobs that must outlive your session |
 | After a restart | Conversations, files and archives are kept; working agents resume | The same, across restarts and redeploys |
 
@@ -135,14 +140,48 @@ its agents can use.
   after clicking its chip.
 - **Calling agents,** with `agent_spawn`: on the local swarm through
   `mcp-server.bat`, on the remote through its connector.
-- **Agents themselves, almost never.** An agent can't start other agents or
-  talk to other agents. There is one exception: a **local** conversation
-  that **you** started can start agents on the remote swarm, and only when
-  you ask it to. It asks you for a name if you didn't give one. Those remote
-  agents keep running on the server while your computer is off (forever in
-  non-stop mode; otherwise they wait for their next message). They are
-  archived when you ask, or automatically when the local conversation that
-  started them is archived. Remote agents never start agents.
+- **Conversations you started in the web view, when you ask.** Such a
+  *main conversation* can start *helper agents* on the same swarm: say
+  "spawn a tester called qa" and it does, or it suggests a helper and spawns
+  it once you agree. Helpers have the same tools and MCP servers as their
+  parent but their own scratch folder and context; the parent passes files
+  to them and back. A helper's tool budget is never bigger than its
+  parent's, and only a **non-stop** main conversation can start non-stop
+  helpers. That makes a manager and its bots possible: one non-stop main
+  conversation that runs one non-stop helper per player of a multiplayer
+  game, and talks to each of them between their steps, the way you do (raise
+  `SWARM_MAX_NONSTOP`, 4 by default, for more than a few bots).
+
+  A **local** main conversation can also start agents on the **remote**
+  swarm, only when you ask it to. Those keep running on the server while
+  your computer is off (forever in non-stop mode; otherwise they wait for
+  their next message).
+
+  In the sidebar, a main conversation's helpers and remote agents are nested
+  under it; click one to open it (a remote agent opens on its swarm) and talk
+  to it like any conversation. Everything a conversation started is archived
+  with it: helpers on the spot, remote agents as soon as the server can be
+  reached. A remote agent archived on its server drops out of the tree.
+- **Nobody else.** Helpers, remote agents, and agents started by calling
+  agents can't start agents (no helpers, no remote agents), and no agent can
+  talk to agents it doesn't own.
+
+Every agent is told what it is (main conversation, helper, remote agent, or
+an agent of a calling agent), what it may start, and what the agents it
+starts can and can't do. A main conversation's system prompt lists every
+agent it started, active or archived; the system prompt is never compacted,
+so it never forgets them.
+
+`SWARM_AGENT_SPAWN` decides what web view conversations may start:
+
+| Value | Local swarm | Remote swarm |
+|---|---|---|
+| `local,remote` | helpers and remote agents (**default**) | (`remote` is ignored) |
+| `local` | helpers only | helpers only |
+| `remote` | remote agents only | nothing |
+| `none` | nothing | nothing (**default**) |
+
+Calling agents can always start agents with `agent_spawn`, whatever it says.
 
 ## What agents can and can't do
 
@@ -182,7 +221,21 @@ view, and receives the files you attach to messages.
 
 **Wait.** An agent can sleep for a number of seconds (up to an hour by
 default), for example between polls of a tool, a file or a remote agent. A
-message or a stop wakes it early. Each sleep counts as a tool call.
+message or a stop wakes it early. Each sleep counts as a tool call. Agents
+tend to sleep longer than they need, so a sleep is cut to 30 seconds until
+the agent has gone 3 minutes without other work (another tool call or a new
+message); then longer sleeps are allowed, until it works again
+(`SWARM_SLEEP_SHORT_MAX`, `SWARM_SLEEP_FREE_AFTER`).
+
+**Answer questions about agent-swarm itself.** Ask any agent, or have a
+calling agent ask it, what the swarm can do, how to set it up or deploy it,
+or how a feature works: it reads the swarm's own files, read-only, with
+`swarm_files`, and only when asked. Those are a fixed allow list (the README,
+LICENSE, NOTICE, `system-prompt.md`, the settings examples, the deploy files,
+the source code) plus the shared `context` folder. Nothing else can be named,
+so `.env`, `config.env`, `state` (transcripts, keys, sign-ins) and every
+other file stay out of reach. Asked for the files, the agent offers them for
+download.
 
 **What they won't do:**
 
@@ -233,8 +286,9 @@ same turn. A message delivered this way also gives it a fresh tool budget.
 The same holds for messages from its owner.
 
 **No runaway loops.** Each message gives the agent a *tool budget*: 15 tool
-calls by default, set per conversation by its owner (0 means unlimited).
-When it's used up, the agent stops, reports what it did, and asks whether to
+calls by default, set per conversation by its owner (0 means unlimited), and
+changeable by you at any time with **Settings** in the web view. When it's
+used up, the agent stops, reports what it did, and asks whether to
 continue (status *waiting for go-ahead*). Any message from its owner
 continues it with a fresh budget.
 
@@ -254,7 +308,9 @@ and nothing gets lost:
   (up to 3 times per turn).
 
 **Non-stop mode.** For agents that should never stop, such as one that plays
-a game forever, tick *Non-stop mode* when you start the conversation. It's
+a game forever, tick *Non-stop mode* when you start the conversation, or
+later in **Settings** (which also turns it off again: the agent finishes its
+step and goes back to waiting for messages, with a tool budget). It's
 powerful and costly, so a human always decides: a calling agent may pass
 `nonstop: true` to `agent_spawn` only after asking its human and getting an
 explicit yes (the tool's documentation and `swarm_guide` say so). A non-stop
@@ -267,7 +323,8 @@ agent:
   little text, so it reacts quickly, your messages get in between steps, and
   its replies stay under the output limit. A reply that does get cut off is
   not lost: the agent continues in smaller steps;
-- paces itself with sleep: long sleeps while waiting for something slow,
+- paces itself with sleep: longer sleeps while waiting for something slow
+  (allowed once it has gone a few minutes without work, see *Wait* above),
   short or none when the task needs fast reactions (put the pace you need in
   its instructions). If it replies without doing anything, it rests 10
   seconds, and after a minute of that the rest doubles every minute, up to
@@ -279,11 +336,16 @@ agent:
 - resumes by itself after the swarm restarts;
 - stops only when you pause it (the Pause button or `agent_stop`; any
   message resumes it) or archive it. On the remote it keeps working while
-  your computer is off.
+  your computer is off;
+- when you started it in the web view, can run non-stop helpers of its own,
+  such as one bot per player in a multiplayer game (see
+  [Who can start agents](#who-can-start-agents)).
 
 **Effort.** How hard an agent thinks on each reply is its *effort level*,
-chosen by its owner when the conversation starts: `low`, `medium` (the
-default, like Claude's own), `high`, `xhigh` or `max`. Higher levels think
+chosen by its owner when the conversation starts (and changeable by you at
+any time with **Settings** in the web view; a working agent switches at its
+next step): `low`, `medium` (the default, like Claude's own), `high`,
+`xhigh` or `max`. Higher levels think
 more readily and at greater length: better on hard problems, slower and more
 expensive. Agents can't raise their own level. Current Claude models decide
 for each reply whether and how much to think, so effort is the control
@@ -302,7 +364,9 @@ stays visible in the web view.
 
 **Archiving.** Archiving (or killing) a conversation stops it and moves it,
 with its whole history and scratch folder, to the Archive. Nothing is
-deleted, and its files stay readable and downloadable.
+deleted, and its files stay readable and downloadable. Everything it
+started goes with it: its helpers at once, its remote agents as soon as the
+remote can be reached (the local swarm keeps retrying).
 
 **Cost.** Every agent turn is its own loop of Claude API calls, with prompt
 caching always on: `system-prompt.md`, the files in `context\` and the
@@ -322,13 +386,19 @@ it's closed.
   opens on its conversations. The window remembers each swarm's tab and open
   conversation until you close it. **You are** picks the name your messages
   are signed with.
+- **Sidebar:** your conversations, with the helpers and remote agents each
+  one started nested under it (a remote agent opens on its own swarm).
 - **Conversations:** every agent with its full transcript: messages,
   thinking, each tool call with its input and result, token use, notices and
   compactions. Messages are shown as Markdown: headings, bold and italic,
   lists and task lists, quotes, tables, links, and code blocks with a Copy
-  button. The message box highlights Markdown as you type. You can message any conversation (see
+  button. The message box highlights Markdown as you type. A message sent
+  while the agent works shows as *waiting to be read* until it reads it.
+  You can message any conversation (see
   [Ownership](#how-conversations-work)), and compact (after a confirmation),
-  stop or archive it.
+  stop or archive it. **Settings** changes its effort and tool budget, and
+  turns non-stop mode on or off, at any time; a working agent switches at its
+  next step.
 - **Progress:** while an agent works, animated dots show what it is doing
   (thinking, which tool, sleeping), with its latest status, checklist of
   steps and a progress bar under them. Every update also stays in the
@@ -599,7 +669,7 @@ The remote swarm is for the same person, on a server:
 - **"page closed" in the web view:** its window was closed and the port was
   released. Run `open-webview.bat` again.
 - **An agent keeps stopping with "waiting for go-ahead":** it used its tool
-  budget. Reply to continue, or start it with a larger `tool_budget`.
+  budget. Reply to continue, or raise its budget with **Settings**.
 - **An MCP server shows "error":** the message comes from starting it. Fix
   its command in `state\mcp-servers.json` (or import it again), then click
   **Restart**.
