@@ -168,8 +168,9 @@ or all files. Regular expressions give up after 2 seconds.
 **Use your other tools,** when you allow them: the MCP servers in the
 swarm's allow list (see [below](#letting-agents-use-your-other-mcp-servers)).
 
-**Keep you informed.** On programming and any other task with more than one
-step, agents show their plan as a checklist of steps (pending, in progress,
+**Keep you informed.** On development work (code, scripts, configs, and
+design and modeling such as 3D models, levels, UI or game design) and any
+other task with more than one step, agents show their plan as a checklist of steps (pending, in progress,
 done, skipped) before they start, and update it with a one-line status after
 every step, without ending their turn. You see it live in the web view; the
 owner gets it from `agent_send` and `agent_read`. Reporting doesn't use the
@@ -224,11 +225,33 @@ shown as `human-<name>`). Agents see who wrote each message, and an owner
 learns which person stepped in. Names are only labels: every human has the
 same say in every conversation.
 
+**Talking to a working agent.** You don't have to wait for an agent to
+finish. A message sent while it works reaches it at its next step, between
+tool calls (and wakes it if it is sleeping): it reads your message first,
+then changes course, pauses, stops or answers and carries on, all in the
+same turn. A message delivered this way also gives it a fresh tool budget.
+The same holds for messages from its owner.
+
 **No runaway loops.** Each message gives the agent a *tool budget*: 15 tool
 calls by default, set per conversation by its owner (0 means unlimited).
 When it's used up, the agent stops, reports what it did, and asks whether to
 continue (status *waiting for go-ahead*). Any message from its owner
 continues it with a fresh budget.
+
+**Small steps.** Agents work one step at a time, so you can follow along
+and nothing gets lost:
+
+- project and development work, design and modeling included, is broken
+  into steps, shown as a checklist
+  before work starts (see *Keep you informed* above);
+- at most 2 file changes per reply, and at most about 16,000 characters per
+  change, so long files are written in parts; bigger or extra changes are
+  refused with a note telling the agent to split them;
+- a large write before the agent has shown any plan is refused until it
+  does;
+- if a reply is cut off at the output limit (`SWARM_MAX_TOKENS`), the agent
+  is told to continue in smaller steps instead of the turn simply ending
+  (up to 3 times per turn).
 
 **Non-stop mode.** For agents that should never stop, such as one that plays
 a game forever, tick *Non-stop mode* when you start the conversation. It's
@@ -239,6 +262,11 @@ agent:
 
 - works continuously and never stops to ask: no tool budget, and when it
   ends a reply it is told to continue;
+- runs at low effort by default (`SWARM_NONSTOP_EFFORT`; a calling agent can
+  pass another level), and keeps its steps short: a few actions per reply and
+  little text, so it reacts quickly, your messages get in between steps, and
+  its replies stay under the output limit. A reply that does get cut off is
+  not lost: the agent continues in smaller steps;
 - paces itself with sleep: long sleeps while waiting for something slow,
   short or none when the task needs fast reactions (put the pace you need in
   its instructions). If it replies without doing anything, it rests 10

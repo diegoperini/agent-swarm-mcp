@@ -216,7 +216,7 @@
         <div class="field" id="f-budget-field"><label for="f-budget">Tool budget</label>
           <div class="unit"><input id="f-budget" type="number" min="0" max="10000"><span id="f-budget-note"></span></div></div>
         <div class="field"><label class="check"><input type="checkbox" id="f-nonstop"> Non-stop mode</label>
-          <span class="note">For agents that never stop working, like one that plays a game forever. The agent works continuously and never pauses to ask for permission, so it has no tool budget, and it runs at the default effort. It compacts itself at <span id="f-nonstop-at">800k</span> tokens of context. You can still message it; messages reach it between its steps. It keeps running, and using tokens, until you pause or archive it.</span></div>
+          <span class="note">For agents that never stop working, like one that plays a game forever. The agent works continuously and never pauses to ask for permission, so it has no tool budget, and it runs at low effort (SWARM_NONSTOP_EFFORT) to act and react quickly. It compacts itself at <span id="f-nonstop-at">800k</span> tokens of context. You can still message it; messages reach it between its steps. It keeps running, and using tokens, until you pause or archive it.</span></div>
       </div>
       <div class="dlg-col">
         <div class="field"><label for="f-title">Title</label><input id="f-title" placeholder="Optional short description"></div>
@@ -570,7 +570,7 @@ function renderHead(c) {
     if (!mine) h = c.owner + ' owns this conversation. Your message is injected as the developer\'s and overrides ' + c.owner + '\'s instructions; the agent tells ' + c.owner + ' what changed.';
     if (c.nonstop) h += c.paused ? ' Non-stop work is paused: any message resumes it.' : ' Non-stop: messages reach the agent between its steps, without stopping its work.';
     else if (c.status === 'awaiting_confirmation') h += ' The agent used its tool budget and is waiting: any message continues it with a fresh budget.';
-    else if (c.status === 'working') h += ' Messages sent now are queued for the next turn.';
+    else if (c.status === 'working') h += ' The agent is working: your message reaches it at its next step, so it can change course, pause or stop.';
     hint.textContent = h;
     ta.placeholder = mine ? 'Message' : 'Inject a message as the developer (overrides ' + c.owner + ')';
   }

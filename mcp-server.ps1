@@ -133,6 +133,7 @@ function Get-Settings {
         ContextWarnPercent = [int](& $get 'SWARM_CONTEXT_WARN_PERCENT' '70')
         ToolBudget         = [int](& $get 'SWARM_TOOL_BUDGET' '15')
         DefaultEffort      = ([string](& $get 'SWARM_DEFAULT_EFFORT' 'medium')).ToLowerInvariant()
+        NonstopEffort      = ([string](& $get 'SWARM_NONSTOP_EFFORT' 'low')).ToLowerInvariant()
         MaxParallel        = [int](& $get 'SWARM_MAX_PARALLEL' '4')
         ScratchMaxMb       = [int](& $get 'SWARM_SCRATCH_MAX_MB' '1000')
         ToolResultMaxChars = [int](& $get 'SWARM_TOOL_RESULT_MAX_CHARS' '100000')
@@ -188,6 +189,7 @@ function Get-Settings {
     if ($s.NonstopCompactAt -lt 10000) { $s.NonstopCompactAt = 10000 }
     if ($s.ContextWarnPercent -lt 1 -or $s.ContextWarnPercent -gt 99) { $s.ContextWarnPercent = 70 }
     if ($script:Efforts -notcontains $s.DefaultEffort) { throw "SWARM_DEFAULT_EFFORT must be one of: $($script:Efforts -join ', ') (got $($s.DefaultEffort))." }
+    if ($script:Efforts -notcontains $s.NonstopEffort) { throw "SWARM_NONSTOP_EFFORT must be one of: $($script:Efforts -join ', ') (got $($s.NonstopEffort))." }
     $sys = Get-SystemContext
     $s.SystemPrompt = $sys.Text; $s.SystemFiles = $sys.Files
     return $s
@@ -473,7 +475,8 @@ function New-Conversation([string]$Owner, [string]$Name, [string]$Model, [string
     if ($Title.Length -gt 120) { $Title = $Title.Substring(0, 120) }
     if ($ToolBudget -lt 0) { $ToolBudget = $script:S.ToolBudget }   # not given: the default
     $ToolBudget = [Math]::Min(10000, $ToolBudget)                    # 0 = unlimited
-    if (-not $Effort -or $Nonstop) { $Effort = $script:S.DefaultEffort }   # non-stop agents run at the default effort
+    # Non-stop agents run automation: fast steps, so low effort unless the owner chose a level.
+    if (-not $Effort) { if ($Nonstop) { $Effort = $script:S.NonstopEffort } else { $Effort = $script:S.DefaultEffort } }
     $Effort = $Effort.Trim().ToLowerInvariant()
     if ($script:Efforts -notcontains $Effort) { throw "Unknown effort '$Effort': use $($script:Efforts -join ', ')." }
     $now = (Get-Date).ToString('o')
@@ -510,8 +513,9 @@ function Add-ConvMessage($Meta, [string]$From, [string]$Text, [string]$HumanName
     if ($mid -eq 1) { $Meta.initial_message = $Text; $Meta.initial_from = $From }
     Initialize-ConvEvents $script:Shared $Meta.id ([System.IO.Path]::Combine($script:Shared.ConvRoot, $Meta.id))
     $seq = [int]$script:Shared.Seq[$Meta.id]
-    if ($Meta.nonstop -and $script:Running.ContainsKey($Meta.id)) {
-        # Delivered between the agent's steps, without stopping its work.
+    $rj = $script:Running[$Meta.id]
+    if ($rj -and $rj.Job.Kind -eq 'turn') {
+        # Delivered into the running turn, between the agent's steps: it can change course or stop.
         if (-not $script:Shared.Inbox.ContainsKey($Meta.id)) { $script:Shared.Inbox[$Meta.id] = New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]' }
         $script:Shared.Inbox[$Meta.id].Enqueue($msg)
     } else {
@@ -754,11 +758,12 @@ function Complete-Jobs {
             if ($m.nonstop) {
                 if (-not $res.Fatal) { $m.compactions = [int]$m.compactions + [int]$res.Compactions - [int][bool]$res.Compacted }
                 if ($m.status -eq 'error' -or $m.status -eq 'paused') { $m.paused = $true }
-                # Messages that arrived after the worker's last look wait for the next run.
-                $q = $script:Shared.Inbox[$m.id]; $x = $null
-                if ($q) { while ($q.TryDequeue([ref]$x)) { $m.pending = @($m.pending) + @($x) } }
-                $script:Shared.Answered.Remove($m.id); $script:Shared.CompactDoneSerial.Remove($m.id)
+                $script:Shared.CompactDoneSerial.Remove($m.id)
             }
+            # Messages that arrived after the worker's last look wait for the next turn.
+            $q = $script:Shared.Inbox[$m.id]; $x = $null
+            if ($q) { while ($q.TryDequeue([ref]$x)) { $m.pending = @($m.pending) + @($x) } }
+            $script:Shared.Answered.Remove($m.id)
         } elseif ($job.Kind -eq 'compact') {
             if (-not $res.Fatal) {
                 if (-not $res.Error) { $m.compactions = [int]$m.compactions + 1; $m.context_tokens = [int]$res.ContextTokens }
@@ -818,9 +823,9 @@ function Complete-Waiter($W, [bool]$Archived) {
     if ($W.Extra) { foreach ($k in $W.Extra.Keys) { $p[$k] = $W.Extra[$k] } }
     $done = $true
     if ($arch) { $p.status = 'archived' }
-    elseif ($m.nonstop -and $script:Running.ContainsKey($m.id) -and (($W.Kind -eq 'reply' -and [int]$script:Shared.Answered[$m.id] -ge $W.MsgId) -or ($W.Kind -eq 'compact' -and [int]$script:Shared.CompactDoneSerial[$m.id] -ge $W.Serial))) {
-        $p.status = 'working (non-stop)'
-        $p.note = 'The agent answered and keeps working. Read its further progress with agent_read since=' + $p.next_since + '.'
+    elseif ($script:Running.ContainsKey($m.id) -and (($W.Kind -eq 'reply' -and [int]$script:Shared.Answered[$m.id] -ge $W.MsgId) -or ($m.nonstop -and $W.Kind -eq 'compact' -and [int]$script:Shared.CompactDoneSerial[$m.id] -ge $W.Serial))) {
+        $p.status = 'working'; if ($m.nonstop) { $p.status = 'working (non-stop)' }
+        $p.note = 'The agent got your message in the middle of its work, answered, and keeps working. Read its further progress with agent_read since=' + $p.next_since + '.'
     }
     elseif ($script:Running.ContainsKey($m.id) -or @($m.pending).Count -or ($W.Kind -eq 'compact' -and [int]$m.compact_done -lt $W.Serial)) {
         $done = $false
@@ -842,7 +847,7 @@ function Update-Waiters {
         $ready = -not $script:Running.ContainsKey($m.id)
         if ($w.Kind -eq 'reply') {
             $ready = $ready -and ([int]$m.processed_through -ge $w.MsgId)
-            if ($m.nonstop -and $script:Shared.Answered.ContainsKey($m.id) -and [int]$script:Shared.Answered[$m.id] -ge $w.MsgId) { $ready = $true }
+            if ($script:Shared.Answered.ContainsKey($m.id) -and [int]$script:Shared.Answered[$m.id] -ge $w.MsgId) { $ready = $true }   # answered mid-turn
         } else {
             $ready = $ready -and ([int]$m.compact_done -ge $w.Serial)
             if ($m.nonstop -and $script:Shared.CompactDoneSerial.ContainsKey($m.id) -and [int]$script:Shared.CompactDoneSerial[$m.id] -ge $w.Serial) { $ready = $true }
@@ -873,7 +878,7 @@ $script:Tools = @(
             message = @{ type = 'string'; description = 'Optional first message.' }
             tool_budget = @{ type = 'integer'; description = 'Tool calls the agent may make per message (count) before it stops and asks you to continue. Omit it for the server default (15). 0 = unlimited: the agent never stops to ask about tool calls, so use 0 only when your human agreed or the task is clearly bounded. Not used in non-stop mode.' }
             nonstop = @{ type = 'boolean'; description = 'Non-stop mode (default false). DANGEROUS, NEEDS YOUR HUMAN''S CONFIRMATION: before setting this, ask the human you work for, explain that the agent will run and spend tokens continuously until someone pauses or kills it, and set it only after they explicitly agree. Never set it on your own judgment. The agent works indefinitely (for example playing a game), never pausing for permission; your messages reach it between its steps; it compacts itself automatically. It runs until you call agent_stop (pause) or agent_kill.' }
-            effort = @{ type = 'string'; enum = @('low', 'medium', 'high', 'xhigh', 'max'); description = 'How hard the agent thinks and works on each reply (default medium, like Claude''s own default). low: quick, mechanical work. high: complex reasoning. xhigh and max: very long, demanding work at a much higher cost. Choose above medium only when the work needs it. Ignored in non-stop mode, which runs at the default.' }
+            effort = @{ type = 'string'; enum = @('low', 'medium', 'high', 'xhigh', 'max'); description = 'How hard the agent thinks and works on each reply (default medium, like Claude''s own default; non-stop agents default to low, for fast action and reaction). low: quick, mechanical work and automation loops. high: complex reasoning. xhigh and max: very long, demanding work at a much higher cost. Choose above medium only when the work needs it.' }
             wait_seconds = $p_wait }; required = @('agent', 'name') } },
     @{ name = 'agent_send'; description = 'Send a message to one of your agents and wait for its reply. When the agent stopped to ask whether to continue (status awaiting_confirmation), any message continues it with a fresh tool budget.'
        inputSchema = @{ type = 'object'; properties = @{ agent = $p_agent; name = $p_id; message = @{ type = 'string' }; wait_seconds = $p_wait }; required = @('agent', 'name', 'message') } },
@@ -1023,7 +1028,7 @@ game. It is dangerous: such an agent runs and spends tokens until someone
 pauses or kills it. So it ALWAYS needs a human's confirmation. Before you
 spawn with nonstop: true, ask the human you work for, explain that, and
 spawn only after they explicitly agree. Never decide it on your own. (A
-human starting a non-stop agent in the web view has confirmed it already.) No tool budget, no pauses for permission, default effort. Messages
+human starting a non-stop agent in the web view has confirmed it already.) No tool budget, no pauses for permission, low effort by default (fast steps; pass effort to choose another level). Messages
 reach it between its steps, and agent_send returns its first answer. It
 compacts itself at 800,000 tokens of context and resumes after restarts.
 It paces itself with sleep: long sleeps while it waits for something slow,
