@@ -101,6 +101,19 @@
   .pill.working::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin-right: 5px; vertical-align: 1px; animation: swarm-pulse 1.2s infinite ease-in-out; }
   @keyframes swarm-pulse { 0%, 100% { opacity: .3; } 50% { opacity: 1; } }
   @media (prefers-reduced-motion: reduce) { .typing .dots i, .pill.working::before { animation: none; opacity: .8; } }
+  .ev.progress { margin: 2px 0 10px; padding: 6px 10px; border-left: 3px solid var(--accent); background: var(--panel); border-radius: 0 8px 8px 0; font-size: 13px; margin-right: 15%; }
+  .ev.progress .pct { color: var(--muted); font-size: 12px; margin-left: 6px; }
+  .steps { list-style: none; margin: 6px 0 0; padding: 0; font-size: 12.5px; }
+  .steps li { display: flex; gap: 8px; align-items: baseline; padding: 1px 0; }
+  .steps li .mk { width: 14px; text-align: center; flex: none; color: var(--muted); }
+  .steps li.done { color: var(--muted); } .steps li.done .mk { color: var(--ok); }
+  .steps li.in_progress { font-weight: 600; } .steps li.in_progress .mk { color: var(--accent); }
+  .steps li.skipped { color: var(--muted); text-decoration: line-through; }
+  .typing-wrap { max-width: 920px; margin: -8px auto 0; padding: 0 16px 16px; }
+  .typing-wrap .typing { margin: 0; padding: 0; }
+  .typing-wrap .plan { margin-top: 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); max-width: 560px; }
+  .typing-wrap .plan .bar { height: 4px; border-radius: 2px; background: var(--soft); overflow: hidden; margin-top: 6px; }
+  .typing-wrap .plan .bar div { height: 100%; background: var(--accent); transition: width .4s; }
   .composer .chips { max-width: 920px; margin: 0 auto; padding: 8px 16px 0; display: flex; gap: 6px; flex-wrap: wrap; }
   .composer .chips:empty { display: none; }
   .chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); font-size: 12px; max-width: 320px; }
@@ -336,7 +349,7 @@ function renderList() {
 
 // ---------- conversation pane ----------
 function openConv(id, archived) {
-  goneToArchive = null;
+  goneToArchive = null; planKey = '';
   convSel = id; convArchived = archived; lastSeq = 0; convMeta = null; headKey = ''; compacting = null;
   rememberUi();
   renderPane(); renderList(); pollConv();
@@ -361,10 +374,13 @@ function renderPane() {
   const head = el('div', 'conv-head'); head.id = 'convhead';
   const sc = el('div', null); sc.id = 'scroller';
   const evs = el('div', null); evs.id = 'events';
-  const typing = el('div', 'typing'); typing.id = 'typing'; typing.style.display = 'none';
+  const wrap = el('div', 'typing-wrap'); wrap.id = 'typingwrap'; wrap.style.display = 'none';
+  const typing = el('div', 'typing'); typing.id = 'typing';
   const dots = el('span', 'dots'); dots.append(el('i'), el('i'), el('i'));
   typing.append(dots, el('span', null, ''));
-  sc.append(evs, typing);
+  const plan = el('div', 'plan'); plan.id = 'plan'; plan.style.display = 'none';
+  wrap.append(typing, plan);
+  sc.append(evs, wrap);
   pane.append(head, sc);
   if (!convArchived) {
     const comp = el('div', 'composer'); comp.id = 'composer';
@@ -466,10 +482,28 @@ function downloadFile(id, path) { return downloadFrom('/api/download?id=' + enco
 function downloadZip(id) { return downloadFrom('/api/download-zip?id=' + encodeURIComponent(id), id + '-files.zip').catch(e => alert(e.message)); }
 
 // "Please wait" while the agent thinks, uses a tool or writes its reply.
+const STEP_MARK = { done: '\u2713', in_progress: '\u25B8', pending: '\u25CB', skipped: '\u2013' };
+function stepList(steps) {
+  const ul = el('ul', 'steps');
+  for (const s of steps || []) { const li = el('li', s.status); li.append(el('span', 'mk', STEP_MARK[s.status] || '\u25CB'), el('span', null, s.title)); ul.append(li); }
+  return ul;
+}
+let planKey = '';
 function renderTyping(c) {
-  const t = $('typing'); if (!t) return;
+  const w = $('typingwrap'), t = $('typing'); if (!w || !t) return;
   const busy = !c.archived && c.status === 'working' && !(c.phase && /^idle/.test(c.phase));
-  t.style.display = busy ? '' : 'none';
+  w.style.display = busy ? '' : 'none';
+  const pl = $('plan'), pg = busy ? c.progress : null;
+  const key = JSON.stringify(pg || null);
+  if (key !== planKey) {
+    planKey = key; pl.textContent = '';
+    if (pg && ((pg.steps && pg.steps.length) || pg.text)) {
+      if (pg.text) pl.append(el('div', null, pg.text));
+      if (pg.steps && pg.steps.length) pl.append(stepList(pg.steps));
+      if (pg.percent != null) { const bar = el('div', 'bar'); const f = el('div'); f.style.width = pg.percent + '%'; bar.append(f); pl.append(bar); }
+      pl.style.display = '';
+    } else pl.style.display = 'none';
+  }
   if (!busy) return;
   const p = c.phase || 'thinking';
   let label = convSel + ' is working';
@@ -585,6 +619,13 @@ function addEvent(e) {
     }
     case 'usage': n = el('div', 'ev usage', fmtK(e.input_tokens) + ' tokens in / ' + fmtK(e.output_tokens) + ' out · cache ' + fmtK(e.cache_read) + ' read / ' + fmtK(e.cache_write) + ' written · context ' + fmtK(e.context_tokens) + (e.stop_reason && e.stop_reason !== 'tool_use' && e.stop_reason !== 'end_turn' ? ' · ' + e.stop_reason : '')); break;
     case 'notice': n = el('div', 'ev notice ' + (e.level || ''), e.text); break;
+    case 'progress': {
+      n = el('div', 'ev progress');
+      if (e.text) n.append(document.createTextNode(e.text));
+      if (e.percent != null) n.append(el('span', 'pct', e.percent + '%'));
+      if (e.steps && e.steps.length) n.append(stepList(e.steps));
+      break;
+    }
     case 'files': {
       n = el('div', 'ev assistant');
       n.append(el('div', 'who', convSel + ' offers ' + (e.files || []).length + ' file(s) for download · ' + fmtTime(e.time)));

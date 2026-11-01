@@ -736,6 +736,7 @@ function Get-SystemBlocks($S, $Meta) {
 $(if ($Meta.nonstop) { "- Non-stop mode: your owner started you to work continuously and indefinitely on your task. You have NO tool budget: make as many tool calls as the task needs, sleep included. Never stop to ask for permission and never wait for a go-ahead: when you end a reply, you will be told to continue. New messages from your owner (or the developer) arrive between your steps: answer them in text, follow them, and keep working. Your context is compacted automatically when it grows large, so keep your plan, progress and anything you must remember in your scratch folder and keep it current.`n- Pace yourself with the sleep tool, because every step costs tokens. Match the pace to the task: when you are waiting for something slow (a build, a long process, a turn in a slow game, new work to arrive), sleep for a while instead of checking again and again. When the task needs fast reactions (real-time play, reflexes in a video game, anything where a delay loses), sleep briefly or not at all and keep acting through your tools. Your owner's instructions about pacing always win. If you have nothing to do, say so once and sleep; replying without doing anything makes the swarm rest you for longer and longer." } elseif ([int]$Meta.tool_budget -eq 0) { "- Tool budget: unlimited. Your owner chose that, so make as many tool calls as the task needs without stopping to ask about them. Still finish what you were asked and then stop: report the result and wait for your owner's next message." } else { "- Tool budget: at most $($Meta.tool_budget) tool calls per owner message. When it runs out you will be told; then stop, report your progress, and ask your owner whether to continue. Never start long multi-step work without your owner's go-ahead: when a task needs many steps, outline the plan and ask first." })
 - To wait (for example between polls of something that isn't ready yet), call sleep with a number of seconds instead of polling in a tight loop.
 - When you call several tools in one reply, they run one after another, in the order you wrote them, never at the same time: two 1-second sleeps take 2 seconds.
+- For long or complex tasks (several steps, many tool calls, or more than a minute or two), make the steps visible with report_progress: first your plan as a checklist of steps, then after each step the updated checklist and a one-line status. Your owner and the developer see it live, so nobody waits in silence. It doesn't end your turn and doesn't use your tool budget. Short, simple tasks don't need it.
 - When you finish a file someone will want to keep (a report, a data file), or when you are asked for one, call offer_download: it gives the people in the web view a download button. Files they attach to a message arrive in your scratch folder's uploads/ folder; the message says which.
 - Your scratch folder is your only file space. Files: list_files, read_file, write_file, append_file, edit_file, edit_lines, copy_path, move_path, make_folder, delete_path. Text work: search_files (grep), replace_in_files (sed), transform_text (pipelines like grep | sort | uniq | cut), file_stats (wc), diff_files, json_query and json_edit. Most of them work on one file, a folder, a wildcard pattern (e.g. levels/**/*.json) or all files. Prefer them to rewriting whole files by hand: they are exact and cheaper. Your owner can read your scratch folder.
 - You cannot run code. Do the work with your tools; never give your owner code or commands to run so the task gets done, unless they explicitly said that is fine. If your tools can't do it, say so plainly and say what would make it possible.
@@ -824,6 +825,34 @@ function Get-InboxBlocks($Shared, $Meta, [System.Collections.ArrayList]$Consumed
 }
 
 # The sleep tool: waits without tokens; a message, a stop or an archive wakes it.
+# A progress note from the agent in the middle of its turn (event "progress").
+function Invoke-ReportProgress($Shared, [string]$Id, $A) {
+    $text = ([string](Get-Prop $A 'text')).Trim()
+    if ($text.Length -gt 500) { $text = $text.Substring(0, 500) }
+    $steps = New-Object System.Collections.ArrayList
+    foreach ($st in @(Get-Prop $A 'steps' | Where-Object { $null -ne $_ } | Select-Object -First 30)) {
+        $t = ([string](Get-Prop $st 'title')).Trim(); if (-not $t) { continue }
+        if ($t.Length -gt 200) { $t = $t.Substring(0, 200) }
+        $state = ([string](Get-Prop $st 'status')).Trim().ToLowerInvariant()
+        if ($state -notin @('pending', 'in_progress', 'done', 'skipped')) { $state = 'pending' }
+        [void]$steps.Add([ordered]@{ title = $t; status = $state })
+    }
+    if (-not $text -and -not $steps.Count) { throw 'Give text, steps, or both.' }
+    $ev = @{ text = $text }
+    if ($steps.Count) { $ev.steps = $steps.ToArray() }
+    $pc = Get-Prop $A 'percent'
+    if ($null -ne $pc -and [string]$pc -ne '') { $n = 0.0; if ([double]::TryParse([string]$pc, [ref]$n)) { $ev.percent = [int][Math]::Max(0, [Math]::Min(100, $n)) } }
+    if ($steps.Count -and $null -eq $ev.percent) {
+        $done = @($steps | Where-Object { $_.status -in @('done', 'skipped') }).Count
+        $ev.percent = [int][Math]::Round(100.0 * $done / $steps.Count)
+    }
+    [void](Add-ConvEvent $Shared $Id 'progress' $ev)
+    $prev = $Shared.Progress[$Id]
+    $keep = $ev.steps; if (-not $keep -and $prev) { $keep = $prev.steps }   # a text-only update keeps the last checklist
+    $Shared.Progress[$Id] = @{ text = $text; percent = $ev.percent; steps = $keep; time = (Get-Date).ToString('o') }
+    return 'Reported. Keep working: your owner and the web view see it now.'
+}
+
 # Puts download buttons for scratch files into the transcript (event "files").
 function Invoke-OfferDownload($Shared, [string]$Scratch, [string]$Id, $A) {
     $p = [string](Get-Prop $A 'path')
@@ -894,6 +923,11 @@ function Invoke-AgentTurn($Shared, $S, $Job, $Http) {
     $tools = New-Object System.Collections.ArrayList
     foreach ($t in Get-ScratchToolDefs) { [void]$tools.Add($t) }
     [void]$tools.Add(@{ name = 'compact_context'; description = 'Compact this conversation: earlier messages are replaced by a detailed summary, freeing context. Use it only when your owner asks for it.'; input_schema = @{ type = 'object'; properties = @{} } })
+    [void]$tools.Add(@{ name = 'report_progress'; description = 'Show your owner and the people watching how a long or complex task is going, without ending your turn. For a task with several steps, send your plan first as steps (each pending), then call it again after each step with the updated checklist (in_progress, done, skipped) and a one-line text, e.g. "Converted 40 of 120 files; fixing headers next". The newest checklist is shown live in the web view. Use it for work that takes many tool calls or more than a minute or two. It does not use your tool budget. Not for your final answer: write that as your reply.'
+                        input_schema = @{ type = 'object'; properties = @{
+                            text = @{ type = 'string'; description = 'What happened and what comes next, one or two short sentences.' }
+                            steps = @{ type = 'array'; description = 'Optional: your plan as a checklist (at most 30 steps). Send the whole list each time, with each step''s current status.'; items = @{ type = 'object'; properties = @{ title = @{ type = 'string' }; status = @{ type = 'string'; enum = @('pending', 'in_progress', 'done', 'skipped') } }; required = @('title', 'status') } }
+                            percent = @{ type = 'number'; description = 'Optional: how far along you are (0-100). With steps, it is worked out from them when you leave it out.' } } } })
     [void]$tools.Add(@{ name = 'offer_download'; description = 'Offer files from your scratch folder for download: the people in the swarm''s web view get a download button for each, right in this conversation. Use it for finished deliverables (a report, a data file), when your owner or the developer asks for a file, or when they''d want to keep it. path takes one file, a folder or a wildcard pattern (at most 50 files).'
                         input_schema = @{ type = 'object'; properties = @{ path = @{ type = 'string'; description = 'A file, a folder, or a wildcard pattern (e.g. out/*.csv).' }; note = @{ type = 'string'; description = 'Optional: one line about what the files are.' } }; required = @('path') } })
     [void]$tools.Add(@{ name = 'sleep'; description = "Wait before your next step, for example between polls of an MCP tool, a file or a remote agent that isn't ready yet. Sleeps for the given number of seconds (1-$($S.SleepMaxS)). You wake early when your owner sends a message or stops you. Costs no tokens while sleeping. Tool calls in one reply run one after another, so several sleeps add up."
@@ -1038,6 +1072,12 @@ function Invoke-AgentTurn($Shared, $S, $Job, $Http) {
             $results = New-Object System.Collections.ArrayList
             foreach ($tu in $toolUses) {
                 $name = [string]$tu.name
+                if ($name -eq 'report_progress') {
+                    # A status update between steps: shown to people and owners at once, free of the tool budget.
+                    try { $txt = Invoke-ReportProgress $Shared $id $tu.input; $bad = $false } catch { $txt = $_.Exception.Message; $bad = $true }
+                    [void]$results.Add(@{ type = 'tool_result'; tool_use_id = [string]$tu.id; content = $txt; is_error = $bad })
+                    continue
+                }
                 $inputJson = ConvertTo-Json -InputObject $tu.input -Depth 40 -Compress
                 [void](Add-ConvEvent $Shared $id 'tool_call' @{ tool_use_id = [string]$tu.id; name = $name; input = $inputJson })
                 if ($Shared.Cancel.ContainsKey($id)) { throw 'CANCELLED' }
@@ -1156,6 +1196,7 @@ function Invoke-AgentTurn($Shared, $S, $Job, $Http) {
         $result.InTokens += $c.InTokens; $result.OutTokens += $c.OutTokens
     }
     $Shared.Live.Remove($id)
+    $Shared.Progress.Remove($id)
     return $result
 }
 
@@ -1309,6 +1350,6 @@ function Invoke-Compaction($Shared, $S, $Job, $Http) {
     } catch {
         $res.Error = $_.Exception.Message
         [void](Add-ConvEvent $Shared $id 'error' @{ text = "Compaction failed: $($_.Exception.Message)" })
-    } finally { $Shared.Live.Remove($id) }
+    } finally { $Shared.Live.Remove($id); $Shared.Progress.Remove($id) }
     return $res
 }

@@ -29,6 +29,24 @@ server, has each one echo its name, then archives them after 20 seconds.*
 >
 > Hi! Obviously, everything in this README is written by an AI, but this one paragraph is fully mine to write. I built this tool because I realized my Claude subscription came with some API credits that were just sitting there, unused. I wanted to put them to work by automating the agentic tasks I do every day. Along the way, it grew into a full harness that can do pretty much anything, as long as there's an MCP server for it to talk to. Set your API key, run the webview .bat file on a Windows PC, and you're good to go: there are no dependencies. The UI will feel familiar if you've used any other AI chat app. Ask it what it can do, have conversations, build automations. Hook it into your existing AI tools to spawn agents on demand without ever opening the admin UI, or deploy it to a remote server so your agents keep running while your computer is off. I use it to drive Unreal Engine, Blender and my own small MCP toolchain, which lets me spend API credits instead of subscription tokens on the same kind of work I've been doing with my subscription for a long time.
 
+## Local and remote agents
+
+| | Local agents | Remote agents |
+| --- | --- | --- |
+| Run on | Your Windows computer, with Windows PowerShell 5.1 | A Linux server with Docker, with PowerShell 7 |
+| Available | While your computer is on and the swarm runs | All the time, even when your computer is off |
+| Named | `local.<name>` | `<remote>.<name>`, e.g. `remote.<name>` |
+| MCP tools | The servers you allow on your computer: a game editor, Blender, your other local tools | The servers allowed on the server, usually none. They can't reach your computer, its files or its apps |
+| Files | A scratch folder on your computer | A scratch folder on the server |
+| You use them from | The web view on your computer; Claude Desktop, Claude Code or any MCP client through `mcp-server.bat` | A Claude custom connector (HTTPS, access key); the remote's own web view; your local web view, as the admin gateway |
+| Spawned by | You, and the agents connected to your local swarm | You, agents using the connector, and your local conversations when you ask them to |
+| Good for | Work that needs tools on your computer: driving Unreal Engine or Blender, editing local projects | Long or always-on work on text and files: non-stop agents, batch text processing, jobs that must outlive your session |
+| After a restart | Conversations, files and archives are kept; working agents resume | The same, across restarts and redeploys |
+
+Every calling agent can tell which kind it is talking to: `swarm_guide`
+starts by saying whether the swarm is local or remote and which MCP servers
+its agents can use.
+
 ## How it works
 
 **Agents and names.** Every agent has a mandatory, unique name. The swarm adds
@@ -82,6 +100,11 @@ never as orders.
   folder (`..`, absolute paths, links) are refused. They don't hand you code
   to run either, unless you said that's fine: when their tools can't do
   something, they tell you plainly what's missing.
+- Report progress during long or complex tasks without ending their turn:
+  a one-line status and their plan as a checklist of steps (pending, in
+  progress, done, skipped). You see it live in the web view, and the agent
+  that owns the conversation gets it from `agent_send` and `agent_read`.
+  It doesn't use the tool budget.
 - Sleep for a given number of seconds (up to an hour by default), for
   example between polls of a tool, a file or a remote agent. A message or a
   stop wakes them early. Each sleep counts as a tool call.
@@ -242,6 +265,10 @@ it's closed.
   message tells the agent which files arrived.
   Agents read text files; other files are kept for MCP tools that can use
   them.
+- **Progress:** while an agent works, animated dots show what it is doing
+  (thinking, which tool, sleeping), and its latest status and checklist of
+  steps appear under them, with a progress bar. Every update also stays in
+  the transcript.
 - **Downloads from agents:** an agent calls `offer_download` for files it
   made, and a download card appears in the conversation.
 - **Archive:** killed conversations, read-only, with their full history.
@@ -302,6 +329,11 @@ your own instance.
 | `agent_kill` | Kill an agent: its conversation moves to the archive. |
 | `agent_compact` | Compact a conversation. |
 | `agent_files` | List or read an agent's scratch folder. |
+| `agent_put_files` | Give an agent text files: up to 50 per call, written into its scratch folder, optionally with a message that tells it they arrived. |
+| `agent_get_files` | Take text files back, whole: several per call, by paths or a pattern (`out/*.md`), also from archived agents. |
+| `agent_list_files` | List an agent's files: a folder, a pattern (`**/*.json`) or everything. |
+| `agent_search_files` | Grep an agent's files: regex, context lines, inverted matches, file names or counts. |
+| `agent_file_tool` | Run any of the agent's own file and text tools on its folder (replace, pipelines, diff, JSON). Archived agents: read-only tools only. |
 | `sleep` | Wait `seconds` (1-300) before returning, between polls. The swarm keeps serving other calls meanwhile. |
 | `debug_open_webview` | Local only: open or focus the web view. |
 

@@ -611,8 +611,9 @@ function Get-ConvSummary($M) {
     if ($live) { $calls += [int]$live.tool_calls; $tin += [long]$live.tokens_in; $tout += [long]$live.tokens_out }
     $seq = 0; if ($script:Shared.Seq.ContainsKey($M.id)) { $seq = [int]$script:Shared.Seq[$M.id] }
     $phase = $null; if ($live) { $phase = $live.phase }
+    $prog = $null; if ($script:Shared.Progress.ContainsKey($M.id)) { $pg = $script:Shared.Progress[$M.id]; $prog = [ordered]@{ text = $pg.text; percent = $pg.percent; steps = @($pg.steps | Where-Object { $null -ne $_ }); time = $pg.time } }
     return [ordered]@{
-        id = $M.id; name = $M.id; title = $M.title; model = $M.model; owner = $M.owner; status = $M.status; phase = $phase; instance = $M.instance
+        id = $M.id; name = $M.id; title = $M.title; model = $M.model; owner = $M.owner; status = $M.status; phase = $phase; progress = $prog; instance = $M.instance
         context_tokens = $ctx; context_window = $script:S.ContextWindow; context_percent = [int][Math]::Round(100.0 * $ctx / [Math]::Max(1, $script:S.ContextWindow))
         tool_budget = $M.tool_budget; effort = $(if ($M.effort) { $M.effort } else { 'medium' }); tool_calls = $calls; tokens_in = $tin; tokens_out = $tout; nonstop = [bool]$M.nonstop; paused = [bool]$M.paused
         compactions = $M.compactions; pending = @($M.pending).Count; children = @($M.children); created_at = $M.created_at; updated_at = $M.updated_at
@@ -641,6 +642,9 @@ function Get-ReplyPayload($Meta, [int]$SinceSeq, [bool]$Archived) {
                      context = [ordered]@{ tokens = $s.context_tokens; window = $s.context_window; percent = $s.context_percent }
                      next_since = $s.seq }
     if ($Archived) { $o.next_since = (@($events | ForEach-Object { [int]$_.seq }) + @($SinceSeq) | Measure-Object -Maximum).Maximum }
+    $pe = @($events | Where-Object { $_.kind -eq 'progress' })
+    if ($pe.Count) { $o.progress_updates = @($pe | ForEach-Object { [string]$_.text } | Where-Object { $_ }) }
+    if ($s.progress) { $o.progress = $s.progress }   # the latest status and checklist while it works
     if ($Meta.status -eq 'awaiting_confirmation') { $o.hint = 'The agent used its tool budget and is asking whether to continue. Answer with agent_send (any message continues; it gets a fresh budget).' }
     if ($s.context_percent -ge $script:S.ContextWarnPercent) { $o.context.warning = 'The context is getting large. Compact it with agent_compact when convenient.' }
     return $o
@@ -890,7 +894,37 @@ $script:Tools = @(
        inputSchema = @{ type = 'object'; properties = @{ seconds = @{ type = 'number'; description = 'How long to wait (seconds, 1-300). MCP clients give up on longer calls.' } }; required = @('seconds') } },
     @{ name = 'agent_files'; description = 'List or read files in one of your agents'' scratch folder (its working files and deliverables). Without path: lists everything.'
        inputSchema = @{ type = 'object'; properties = @{ agent = $p_agent; name = $p_id; path = @{ type = 'string'; description = 'A file to read, or a folder to list.' }
-            offset = @{ type = 'integer'; description = 'First line, 1-based.' }; limit = @{ type = 'integer' } }; required = @('agent', 'name') } }
+            offset = @{ type = 'integer'; description = 'First line, 1-based.' }; limit = @{ type = 'integer' } }; required = @('agent', 'name') } },
+    @{ name = 'agent_put_files'; description = 'Give one of your agents text files: writes them into its scratch folder in one call (for example source text, data or notes for its job). Optionally sends a message with them, which lists the files for the agent, and waits for the reply like agent_send. Up to 50 files and 1,500,000 characters per call.'
+       inputSchema = @{ type = 'object'; properties = @{ agent = $p_agent; name = $p_id
+            files = @{ type = 'array'; description = 'The files to write.'; items = @{ type = 'object'; properties = @{
+                path = @{ type = 'string'; description = 'Path inside the agent''s scratch folder, e.g. input/level1.json (folders are created).' }
+                content = @{ type = 'string'; description = 'The whole text of the file.' } }; required = @('path', 'content') } }
+            overwrite = @{ type = 'boolean'; description = 'Replace files that already exist. Default false: an existing path makes the call fail before anything is written.' }
+            message = @{ type = 'string'; description = 'Optional message sent with the files (the agent is told which files arrived).' }
+            wait_seconds = $p_wait }; required = @('agent', 'name', 'files') } },
+    @{ name = 'agent_get_files'; description = 'Read text files from one of your agents'' scratch folder (active or archived) in one call: its deliverables and working files, whole and unnumbered, ready to use. Give paths, or a pattern (a folder, or wildcards like out/*.md or **/*.json). Up to 50 files and 1,500,000 characters per call; anything left out is listed.'
+       inputSchema = @{ type = 'object'; properties = @{ agent = $p_agent; name = $p_id
+            paths = @{ type = 'array'; items = @{ type = 'string' }; description = 'Files to read, relative to the scratch folder.' }
+            pattern = @{ type = 'string'; description = 'Instead of paths: a folder or a wildcard pattern. Empty string = every file.' } }; required = @('agent', 'name') } },
+    @{ name = 'agent_list_files'; description = 'List files in one of your agents'' scratch folder (active or archived): a folder (recursive optional), a wildcard pattern like out/**/*.json, or everything. Shows sizes.'
+       inputSchema = @{ type = 'object'; properties = @{ agent = $p_agent; name = $p_id
+            path = @{ type = 'string'; description = 'A folder, or a wildcard pattern (* and ? in a name, ** across folders). Default: the whole scratch folder.' }
+            recursive = @{ type = 'boolean'; description = 'For a folder: include subfolders. Default true.' }
+            name_filter = @{ type = 'string'; description = 'Only files whose names match, e.g. *.md' } }; required = @('agent', 'name') } },
+    @{ name = 'agent_search_files'; description = 'Search the text files of one of your agents (active or archived), like grep: "path:line: text" matches, with optional regex, context lines, inverted matches, or just file names or counts. Scope: one file, a folder, a wildcard pattern, or all files.'
+       inputSchema = @{ type = 'object'; properties = @{ agent = $p_agent; name = $p_id
+            pattern = @{ type = 'string'; description = 'Text to find, or a .NET regular expression when regex is true.' }
+            regex = @{ type = 'boolean' }; ignore_case = @{ type = 'boolean' }; invert = @{ type = 'boolean'; description = 'Lines that do NOT match.' }
+            path = @{ type = 'string'; description = 'One file, a folder, a wildcard pattern, or empty for all files.' }
+            name_filter = @{ type = 'string' }
+            context = @{ type = 'integer'; description = 'Context lines around each match (0-20).' }
+            output = @{ type = 'string'; enum = @('lines', 'files', 'count', 'matches') }
+            max_results = @{ type = 'integer'; description = '1-2000, default 300.' } }; required = @('agent', 'name', 'pattern') } },
+    @{ name = 'agent_file_tool'; description = 'Run one of the agent''s own file and text tools on its scratch folder, with the same arguments the agent would use. Read-only tools work on archived agents too: read_file, list_files, search_files, file_stats, diff_files, json_query. On active agents also: write_file, append_file, edit_file, edit_lines, replace_in_files, transform_text, json_edit, copy_path, move_path, make_folder, delete_path. Most take path as one file, a folder, a wildcard pattern or empty for all files. The agent is not told about your changes unless you message it.'
+       inputSchema = @{ type = 'object'; properties = @{ agent = $p_agent; name = $p_id
+            tool = @{ type = 'string'; enum = @('read_file', 'list_files', 'search_files', 'file_stats', 'diff_files', 'json_query', 'write_file', 'append_file', 'edit_file', 'edit_lines', 'replace_in_files', 'transform_text', 'json_edit', 'copy_path', 'move_path', 'make_folder', 'delete_path') }
+            arguments = @{ type = 'object'; description = 'The tool''s arguments, e.g. {"pattern": "TODO", "path": "src/**/*.md"} for search_files, or {"path": "data.csv", "steps": [{"op": "sort", "numeric": true}]} for transform_text. Call with {} to get an error that lists what is missing.' } }; required = @('agent', 'name', 'tool') } }
 )
 $script:LocalOnlyTools = @(
     @{ name = 'debug_open_webview'; description = 'Open the swarm''s web view window for the user (or bring it to the front). Never opens a second window.'
@@ -904,6 +938,20 @@ The swarm runs Claude agents (opus, sonnet or haiku) in conversations. You
 start an agent with agent_spawn, talk to it with agent_send, read its work
 with agent_read and agent_files, and kill it with agent_kill when done.
 Many conversations run at the same time.
+
+## Files
+Each agent works in its own scratch folder of text files. You can work in it
+too, in batches:
+- agent_put_files: hand it text files (up to 50 per call), optionally with a
+  message that tells the agent they arrived.
+- agent_get_files: take its deliverables back, whole (by paths or a pattern
+  like out/*.md).
+- agent_list_files and agent_search_files: see what is there and grep it.
+- agent_file_tool: any of the agent's own file and text tools (replace,
+  pipelines, diff, JSON edits, ...) run on its folder.
+Paths can be one file, a folder, a wildcard pattern (** spans folders) or
+everything. Archived agents' files stay readable. The agent only learns about
+your changes when you message it.
 
 ## What a swarm agent can and can't do
 Read this before you delegate.
@@ -987,7 +1035,10 @@ minute). agent_stop pauses it; any message resumes it; agent_kill ends it.
 ## Replies and waiting
 agent_send and agent_spawn (with a message) wait up to wait_seconds (default
 50, max 300). If the agent is still working, you get status "working" and the
-reply so far; call agent_read with since=<the given number> later. To wait
+reply so far; call agent_read with since=<the given number> later. Agents
+on long or complex tasks report progress between steps: "progress" holds the
+latest status and checklist of steps while it works, and agent_read returns
+each update as a "progress" event. To wait
 between polls, call sleep (1-300 seconds) instead of polling in a tight loop.
 Every answer reports the context size in tokens; when it warns, call
 agent_compact.
@@ -1149,6 +1200,92 @@ function Invoke-SwarmTool([string]$Name, $A, $Responder, $RpcId) {
             $agent = Get-AgentArg $A
             $c = Get-OwnedConv $agent ([string](Get-Prop $A 'name')) -AllowArchived
             return @{ Text = (Get-ScratchView $c.Meta.id $c.Archived ([string](Get-Prop $A 'path')) (Get-Prop $A 'offset') (Get-Prop $A 'limit')); IsError = $false }
+        }
+        'agent_put_files' {
+            $agent = Get-AgentArg $A
+            $c = Get-OwnedConv $agent ([string](Get-Prop $A 'name'))
+            if ($c.Meta.status -eq 'archived' -or $c.Meta.archive_requested) { throw "$($c.Meta.id) is archived." }
+            $files = @(Get-Prop $A 'files' | Where-Object { $null -ne $_ })
+            if (-not $files.Count) { throw 'files is empty.' }
+            if ($files.Count -gt 50) { throw 'At most 50 files per call.' }
+            $root = [System.IO.Path]::Combine($script:Shared.ConvRoot, $c.Meta.id, 'scratch')
+            $over = (Get-Prop $A 'overwrite') -eq $true
+            # Check everything first, so a bad file writes nothing.
+            $plan = New-Object System.Collections.ArrayList; $total = [long]0; $seen = @{}
+            foreach ($f in $files) {
+                $rel = [string](Get-Prop $f 'path')
+                $full = Resolve-ScratchPath $root $rel
+                $key = $full.ToLowerInvariant(); if ($seen.ContainsKey($key)) { throw "$rel is given twice." }; $seen[$key] = $true
+                $text = ConvertTo-Lf ([string](Get-Prop $f 'content'))
+                if ($text.Contains([char]0)) { throw "$rel is not text." }
+                if ([System.IO.Directory]::Exists($full)) { throw "$rel is a folder." }
+                if ([System.IO.File]::Exists($full) -and -not $over) { throw "$rel already exists; set overwrite to replace it." }
+                $total += $text.Length
+                [void]$plan.Add(@{ Full = $full; Text = $text })
+            }
+            if ($total -gt 1500000) { throw "The files are $total characters together; the limit is 1,500,000 per call." }
+            Assert-ScratchQuota $script:S $root $total
+            $written = New-Object System.Collections.ArrayList
+            foreach ($x in $plan) { Write-TextFile $x.Full $x.Text; [void]$written.Add((Get-ScratchRel $root $x.Full)) }
+            Write-Log "$agent put $($written.Count) file(s) into $($c.Meta.id)"
+            $msg = [string](Get-Prop $A 'message')
+            if ($msg.Trim()) {
+                $note = Format-AttachmentNote $c.Meta @($written)
+                return (Invoke-SwarmTool 'agent_send' @{ agent = $agent; name = $c.Meta.id; message = ($note + "`n" + $msg); wait_seconds = (Get-Prop $A 'wait_seconds') } $Responder $RpcId)
+            }
+            return (Out-Json ([ordered]@{ name = $c.Meta.id; written = @($written); characters = $total; note = 'Files written. The agent is not told until you send it a message (or pass message here next time).' }))
+        }
+        'agent_get_files' {
+            $agent = Get-AgentArg $A
+            $c = Get-OwnedConv $agent ([string](Get-Prop $A 'name')) -AllowArchived
+            $root = [System.IO.Path]::Combine($script:Shared.ConvRoot, $c.Meta.id, 'scratch')
+            if ($c.Archived) { $root = [System.IO.Path]::Combine($script:Shared.ArchiveRoot, $c.Meta.id, 'scratch') }
+            if (-not [System.IO.Directory]::Exists($root)) { [void][System.IO.Directory]::CreateDirectory($root) }
+            $paths = @(Get-Prop $A 'paths' | Where-Object { $_ })
+            $targets = New-Object System.Collections.ArrayList
+            if ($paths.Count) {
+                foreach ($p in $paths) { [void]$targets.Add(@{ Rel = [string]$p; Full = (Resolve-ScratchPath $root ([string]$p)) }) }
+            } elseif ($null -ne (Get-Prop $A 'pattern')) {
+                foreach ($f in (Get-TextFiles $root ([string](Get-Prop $A 'pattern')) '')) { [void]$targets.Add(@{ Rel = (Get-ScratchRel $root $f); Full = $f }) }
+            } else { throw 'Give paths, or a pattern ("" for every file).' }
+            $out = New-Object System.Collections.ArrayList; $skipped = New-Object System.Collections.ArrayList; $total = 0
+            foreach ($t in $targets) {
+                if ($out.Count -ge 50) { [void]$skipped.Add([ordered]@{ path = $t.Rel; reason = 'over 50 files in one call' }); continue }
+                if (-not [System.IO.File]::Exists($t.Full)) { [void]$skipped.Add([ordered]@{ path = $t.Rel; reason = 'no such file' }); continue }
+                try { $text = Read-ScratchText $t.Full } catch { [void]$skipped.Add([ordered]@{ path = $t.Rel; reason = 'binary file' }); continue }
+                if ($total + $text.Length -gt 1500000) { [void]$skipped.Add([ordered]@{ path = $t.Rel; reason = 'over 1,500,000 characters in one call; ask for it separately' }); continue }
+                $total += $text.Length
+                [void]$out.Add([ordered]@{ path = (Get-ScratchRel $root $t.Full); characters = $text.Length; content = $text })
+            }
+            return (Out-Json ([ordered]@{ name = $c.Meta.id; archived = $c.Archived; files = @($out); skipped = @($skipped) }))
+        }
+        { $_ -in @('agent_list_files', 'agent_search_files', 'agent_file_tool') } {
+            $agent = Get-AgentArg $A
+            $c = Get-OwnedConv $agent ([string](Get-Prop $A 'name')) -AllowArchived
+            $sc = Get-ConvScratch $c.Meta.id
+            if (-not [System.IO.Directory]::Exists($sc.Root)) { [void][System.IO.Directory]::CreateDirectory($sc.Root) }
+            switch ($Name) {
+                'agent_list_files' {
+                    $tool = 'list_files'
+                    $ta = @{ path = [string](Get-Prop $A 'path'); recursive = ((Get-Prop $A 'recursive') -ne $false); name_filter = [string](Get-Prop $A 'name_filter') }
+                }
+                'agent_search_files' {
+                    $tool = 'search_files'; $ta = @{}
+                    foreach ($k in @('pattern', 'regex', 'ignore_case', 'invert', 'path', 'name_filter', 'context', 'before', 'after', 'output', 'max_results')) { $v = Get-Prop $A $k; if ($null -ne $v) { $ta[$k] = $v } }
+                }
+                default {
+                    $tool = [string](Get-Prop $A 'tool')
+                    $ta = Get-Prop $A 'arguments'; if ($null -eq $ta) { $ta = @{} }
+                }
+            }
+            $readOnly = @('read_file', 'list_files', 'search_files', 'file_stats', 'diff_files', 'json_query')
+            $writers = @('write_file', 'append_file', 'edit_file', 'edit_lines', 'replace_in_files', 'transform_text', 'json_edit', 'copy_path', 'move_path', 'make_folder', 'delete_path')
+            if ($tool -notin ($readOnly + $writers)) { throw "Unknown tool '$tool'. Use one of: $(($readOnly + $writers) -join ', ')." }
+            if ($tool -in $writers -and $sc.Archived) { throw "$($c.Meta.id) is archived: its files are read-only." }
+            if ($tool -eq 'transform_text' -and ((Get-Prop $ta 'in_place') -eq $true -or (Get-Prop $ta 'output_path')) -and $sc.Archived) { throw "$($c.Meta.id) is archived: its files are read-only." }
+            $out = Invoke-ScratchTool $script:S $sc.Root $tool $ta
+            if ($tool -in $writers) { Write-Log "$agent used $tool on $($c.Meta.id)'s files" }
+            return @{ Text = (Limit-Text ([string]$out) $script:S.ToolResultMaxChars); IsError = $false }
         }
         'sleep' {
             $sec = 0.0; try { $sec = [double](Get-Prop $A 'seconds') } catch {}
@@ -2070,7 +2207,7 @@ function Invoke-RemoteHttp($Ctx) {
         }
         if ($req.HttpMethod -eq 'DELETE') { Send-Http $res 200 'text/plain' ''; return }
         if ($req.HttpMethod -ne 'POST') { Send-Http $res 405 'text/plain' 'POST only' @{ Allow = 'POST, DELETE' }; return }
-        $body = Read-Body $req 2000000
+        $body = Read-Body $req 8000000   # agent_put_files can carry 1.5 million characters of text
         $reply = Invoke-RpcLine $body @{ Kind = 'http'; Ctx = $Ctx }
         if ($reply -eq 'DEFERRED') { return }
         if ($null -eq $reply) { try { $res.StatusCode = 202; $res.ContentLength64 = 0; $res.OutputStream.Close() } catch {}; return }
@@ -2386,7 +2523,7 @@ if ($script:Standalone -and $script:S.Mode -ne 'local') { throw 'open is for the
 $script:Shared = [hashtable]::Synchronized(@{
     ConvRoot = $null; ArchiveRoot = $null
     Events = [hashtable]::Synchronized(@{}); Seq = [hashtable]::Synchronized(@{}); EventLock = (New-Object object)
-    Cancel = [hashtable]::Synchronized(@{}); Live = [hashtable]::Synchronized(@{}); CompactRequests = [hashtable]::Synchronized(@{})
+    Cancel = [hashtable]::Synchronized(@{}); Live = [hashtable]::Synchronized(@{}); Progress = [hashtable]::Synchronized(@{}); CompactRequests = [hashtable]::Synchronized(@{})
     Mcp = [hashtable]::Synchronized(@{}); McpLock = (New-Object object); McpConfig = [hashtable]::Synchronized(@{})
     Inbox = [hashtable]::Synchronized(@{}); Wake = [hashtable]::Synchronized(@{}); Answered = [hashtable]::Synchronized(@{}); CompactDoneSerial = [hashtable]::Synchronized(@{})
     LogQueue = (New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]'); ChildAdds = (New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]')
