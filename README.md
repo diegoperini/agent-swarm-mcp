@@ -324,7 +324,9 @@ it's closed.
   are signed with.
 - **Conversations:** every agent with its full transcript: messages,
   thinking, each tool call with its input and result, token use, notices and
-  compactions. You can message any conversation (see
+  compactions. Messages are shown as Markdown: headings, bold and italic,
+  lists and task lists, quotes, tables, links, and code blocks with a Copy
+  button. The message box highlights Markdown as you type. You can message any conversation (see
   [Ownership](#how-conversations-work)), and compact (after a confirmation),
   stop or archive it.
 - **Progress:** while an agent works, animated dots show what it is doing
